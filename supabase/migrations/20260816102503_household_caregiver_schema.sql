@@ -69,16 +69,32 @@ create policy "household members can view fellow caregivers"
   to authenticated
   using (household_id = public.current_household_id());
 
+-- security definer (like current_household_id above) because this check
+-- must see whether *any* caregiver exists for the target household, not just
+-- ones RLS would let the caller see -- otherwise every caller, having no
+-- caregiver row of their own yet, would find the household looks empty.
+create function public.household_has_caregiver(target_household_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from caregiver where household_id = target_household_id);
+$$;
+
 -- A caregiver row may only ever be inserted for the caller's own auth user
--- (self-linking). This intentionally allows joining any household whose id
--- is known, since there is no invite/membership check yet -- ticket 04
--- (invite caregiver) replaces this with an invite-token-gated path. Household
--- ids are random UUIDs and never exposed in listings, so this is acceptable
--- for the bootstrap skeleton.
-create policy "callers can link themselves as a caregiver"
+-- (self-linking), and only to found a brand-new household -- one with no
+-- caregivers yet. Deliberately narrower than "join any household whose id
+-- is known": ticket 04 (invite caregiver) adds the real join path for
+-- households that already have members, gated by an invite token.
+create policy "callers can found a new household as its first caregiver"
   on caregiver for insert
   to authenticated
-  with check (user_id = auth.uid());
+  with check (
+    user_id = auth.uid()
+    and not public.household_has_caregiver(household_id)
+  );
 
 create policy "caregivers can update their own row"
   on caregiver for update

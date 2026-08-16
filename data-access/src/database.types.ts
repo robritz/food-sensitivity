@@ -90,6 +90,10 @@ export type Database = {
     }
     Functions: {
       current_household_id: { Args: never; Returns: string }
+      household_has_caregiver: {
+        Args: { target_household_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
