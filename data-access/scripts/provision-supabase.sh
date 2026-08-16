@@ -106,6 +106,7 @@ ask() {
     printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
   fi
   read -r input || true
+  input="${input%$'\r'}"
   [[ -z "$input" && -n "$current" ]] && input="$current"
   printf -v "$key" '%s' "$input"
 }
@@ -121,6 +122,7 @@ ask_secret() {
   fi
   read -rs input || true
   printf '\n'
+  input="${input%$'\r'}"
   [[ -z "$input" && -n "$current" ]] && input="$current"
   printf -v "$key" '%s' "$input"
 }
@@ -129,6 +131,8 @@ ask_secret() {
 # any existing line). Idempotent.
 write_env() {
   local key="$1" value="$2" tmp
+  value="${value#"${value%%[![:space:]]*}"}"  # trim leading whitespace
+  value="${value%"${value##*[![:space:]]}"}"  # trim trailing whitespace
   touch "$ENV_FILE"
   tmp=$(mktemp)
   grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
@@ -234,7 +238,8 @@ fi
 stage "Copy the API credentials"
 say "These are what the data-access module (and later the app) connect with."
 open_url "https://supabase.com/dashboard/project/$SUPABASE_PROJECT_REF/settings/api-keys"
-step "Under 'Project URL', copy the URL."
+step "Under 'Project URL', copy the URL (the bare https://<ref>.supabase.co"
+step "one -- NOT a variant ending in /rest/v1 or /auth/v1)."
 ask SUPABASE_URL "Paste the project URL:"
 step "Under 'Publishable key' / anon key, copy it (safe for client-side use)."
 ask SUPABASE_ANON_KEY "Paste the anon/publishable key:"

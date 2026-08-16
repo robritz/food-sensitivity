@@ -8,17 +8,28 @@ export interface ServiceRoleEnv extends SupabaseEnv {
 }
 
 function readEnv(name: string): string {
-  const value = process.env[name];
+  // .trim() guards against stray whitespace from a pasted value (e.g. a
+  // trailing \r from a CRLF source).
+  const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
 }
 
+// `supabase start`/`status` prints API_URL right next to REST_URL
+// (API_URL + "/rest/v1") -- easy to paste the wrong one. createClient()
+// appends /rest/v1 itself, so a URL that already has it produces a doubled
+// path and PostgREST fails with "Invalid path specified in request URL"
+// (PGRST125), which gives no hint what's wrong. Strip it defensively.
+function normalizeSupabaseUrl(url: string): string {
+  return url.replace(/\/(rest|auth|graphql|storage|functions)\/v1\/?$/, "").replace(/\/$/, "");
+}
+
 /** Connection config for the anon (caller-scoped, RLS-enforced) client. */
 export function loadSupabaseEnv(): SupabaseEnv {
   return {
-    url: readEnv("SUPABASE_URL"),
+    url: normalizeSupabaseUrl(readEnv("SUPABASE_URL")),
     anonKey: readEnv("SUPABASE_ANON_KEY"),
   };
 }
