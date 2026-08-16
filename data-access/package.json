@@ -1,0 +1,29 @@
+{
+  "name": "@food-tracker/data-access",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Supabase-backed data-access layer, extended by later food-tracker feature tickets.",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "supabase": "supabase --workdir ..",
+    "supabase:start": "supabase --workdir .. start",
+    "supabase:stop": "supabase --workdir .. stop",
+    "supabase:status": "supabase --workdir .. status",
+    "supabase:reset": "supabase --workdir .. db reset",
+    "gen:types": "supabase --workdir .. gen types typescript --local > src/database.types.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "dotenv": "^17.2.3",
+    "supabase": "^2.59.4",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
