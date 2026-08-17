@@ -1,0 +1,35 @@
+# Apache rewrite rules for the Food Sensory Tracker SPA (Vite + react-router-dom).
+# Copied into dist/ on every build since it lives in public/.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Serve existing files/directories as-is (assets, icons, manifest, service worker, etc.)
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Everything else falls back to index.html so react-router-dom can handle the route
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# The service worker must never be cached, or clients can get stuck on a stale version
+<IfModule mod_headers.c>
+  <FilesMatch "^(sw\.js|registerSW\.js)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "^manifest\.webmanifest$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+
+  # Hashed build assets are safe to cache aggressively
+  <FilesMatch "\.[0-9a-f]{8,}\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Gzip common text assets
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml application/manifest+json
+</IfModule>
