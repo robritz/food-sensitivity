@@ -1,5 +1,10 @@
 # Apache rewrite rules for the Food Sensory Tracker SPA (Vite + react-router-dom).
 # Copied into dist/ on every build since it lives in public/.
+#
+# NOTE: the rewrite below is intentionally route-agnostic — it does not list
+# app routes like /login, /invite, /accept-invite, etc. Any path that isn't a
+# real file/dir falls back to index.html and react-router-dom takes it from
+# there. New routes added to src/App.tsx never require an .htaccess change.
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
