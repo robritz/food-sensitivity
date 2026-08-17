@@ -22,7 +22,8 @@
     "supabase:stop": "supabase --workdir .. stop",
     "supabase:status": "supabase --workdir .. status",
     "supabase:reset": "supabase --workdir .. db reset",
-    "gen:types": "supabase --workdir .. gen types typescript --local > src/database.types.ts"
+    "gen:types": "supabase --workdir .. gen types typescript --local > src/database.types.ts",
+    "supabase:functions:deploy": "supabase --workdir .. functions deploy"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0"

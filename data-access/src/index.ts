@@ -13,3 +13,5 @@ export {
   signUpAndCreateHousehold,
 } from "./auth.js";
 export type { CaregiverIdentity, SignInInput, SignUpAndCreateHouseholdInput } from "./auth.js";
+export { acceptHouseholdInvite, inviteCaregiverByEmail } from "./invites.js";
+export type { AcceptHouseholdInviteInput, InviteCaregiverInput } from "./invites.js";

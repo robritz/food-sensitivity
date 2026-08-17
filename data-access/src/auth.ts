@@ -90,14 +90,19 @@ export async function signOut(client: DataAccessClient): Promise<void> {
   if (error) throw error;
 }
 
-/** The signed-in caller's caregiver + household identity, or null if no one is signed in. */
-export async function getCurrentCaregiver(client: DataAccessClient): Promise<CaregiverIdentity | null> {
-  // getSession() reads the locally held session and, unlike getUser(),
-  // resolves to null rather than throwing when no one is signed in.
+/** The signed-in caller's user id, or null if no one is signed in.
+ *
+ * getSession() reads the locally held session and, unlike getUser(),
+ * resolves to null rather than throwing when no one is signed in. */
+export async function getSessionUserId(client: DataAccessClient): Promise<string | null> {
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
   if (sessionError) throw sessionError;
+  return sessionData.session?.user.id ?? null;
+}
 
-  const userId = sessionData.session?.user.id;
+/** The signed-in caller's caregiver + household identity, or null if no one is signed in. */
+export async function getCurrentCaregiver(client: DataAccessClient): Promise<CaregiverIdentity | null> {
+  const userId = await getSessionUserId(client);
   if (!userId) return null;
 
   const { data: caregiver, error: caregiverError } = await client
