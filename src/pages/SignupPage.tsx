@@ -1,12 +1,14 @@
-import { signInWithPassword } from '@food-tracker/data-access'
+import { signUpAndCreateHousehold } from '@food-tracker/data-access'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { useAuth } from '../lib/useAuth'
 
-export function LoginPage() {
+export function SignupPage() {
   const navigate = useNavigate()
   const { setIdentity } = useAuth()
+  const [displayName, setDisplayName] = useState('')
+  const [householdName, setHouseholdName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -17,19 +19,43 @@ export function LoginPage() {
     setError(null)
     setSubmitting(true)
     try {
-      const identity = await signInWithPassword(dataAccessClient, { email, password })
+      const identity = await signUpAndCreateHousehold(dataAccessClient, {
+        email,
+        password,
+        displayName,
+        householdName,
+      })
       setIdentity(identity)
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not log in.')
+      setError(err instanceof Error ? err.message : 'Could not sign up.')
       setSubmitting(false)
     }
   }
 
   return (
     <main>
-      <h1>Log in</h1>
+      <h1>Create your household</h1>
       <form onSubmit={handleSubmit}>
+        <label>
+          Your name
+          <input
+            type="text"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            required
+            autoComplete="name"
+          />
+        </label>
+        <label>
+          Household name
+          <input
+            type="text"
+            value={householdName}
+            onChange={(event) => setHouseholdName(event.target.value)}
+            required
+          />
+        </label>
         <label>
           Email
           <input
@@ -47,16 +73,17 @@ export function LoginPage() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
-            autoComplete="current-password"
+            minLength={6}
+            autoComplete="new-password"
           />
         </label>
         {error && <p role="alert">{error}</p>}
         <button type="submit" disabled={submitting}>
-          {submitting ? 'Logging in…' : 'Log in'}
+          {submitting ? 'Signing up…' : 'Sign up'}
         </button>
       </form>
       <p>
-        Don't have a household yet? <Link to="/signup">Sign up</Link>
+        Already have an account? <Link to="/login">Log in</Link>
       </p>
     </main>
   )
