@@ -66,6 +66,35 @@ export type Database = {
           },
         ]
       }
+      category: {
+        Row: {
+          created_at: string
+          household_id: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "category_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       child: {
         Row: {
           birthdate: string
@@ -91,6 +120,45 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "child_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      food: {
+        Row: {
+          category_id: string
+          created_at: string
+          household_id: string
+          id: string
+          name: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          household_id: string
+          id?: string
+          name: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          household_id?: string
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "food_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "category"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "food_household_id_fkey"
             columns: ["household_id"]
             isOneToOne: false
             referencedRelation: "household"
@@ -151,6 +219,137 @@ export type Database = {
             columns: ["invited_by"]
             isOneToOne: false
             referencedRelation: "caregiver"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_entry: {
+        Row: {
+          child_id: string
+          created_at: string
+          created_by: string
+          food_id: string
+          household_id: string
+          id: string
+          notes: string | null
+          status: string
+        }
+        Insert: {
+          child_id: string
+          created_at?: string
+          created_by: string
+          food_id: string
+          household_id: string
+          id?: string
+          notes?: string | null
+          status: string
+        }
+        Update: {
+          child_id?: string
+          created_at?: string
+          created_by?: string
+          food_id?: string
+          household_id?: string
+          id?: string
+          notes?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_entry_child_id_fkey"
+            columns: ["child_id"]
+            isOneToOne: false
+            referencedRelation: "child"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "caregiver"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_food_id_fkey"
+            columns: ["food_id"]
+            isOneToOne: false
+            referencedRelation: "food"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      log_entry_reason_tag: {
+        Row: {
+          household_id: string
+          log_entry_id: string
+          reason_tag_id: string
+        }
+        Insert: {
+          household_id: string
+          log_entry_id: string
+          reason_tag_id: string
+        }
+        Update: {
+          household_id?: string
+          log_entry_id?: string
+          reason_tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "log_entry_reason_tag_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_reason_tag_log_entry_id_fkey"
+            columns: ["log_entry_id"]
+            isOneToOne: false
+            referencedRelation: "log_entry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_reason_tag_reason_tag_id_fkey"
+            columns: ["reason_tag_id"]
+            isOneToOne: false
+            referencedRelation: "reason_tag"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reason_tag: {
+        Row: {
+          created_at: string
+          household_id: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reason_tag_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
             referencedColumns: ["id"]
           },
         ]

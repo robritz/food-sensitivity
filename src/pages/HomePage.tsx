@@ -21,7 +21,9 @@ export function HomePage() {
           Signed in as {identity.displayName} — {identity.householdName}
         </p>
       )}
-      <p>Home placeholder — food log lands here.</p>
+      <p>
+        <Link to="/log">Food log</Link>
+      </p>
       <p>
         <Link to="/children">Children</Link>
       </p>
