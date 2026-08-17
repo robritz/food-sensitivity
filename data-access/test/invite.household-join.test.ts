@@ -1,54 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { signUpAndCreateHousehold } from "../src/auth.js";
-import type { CaregiverIdentity } from "../src/auth.js";
 import type { DataAccessClient } from "../src/client.js";
-import { createServiceRoleClient } from "../src/client.js";
-import { loadSupabaseEnv } from "../src/env.js";
 import { acceptHouseholdInvite, inviteCaregiverByEmail } from "../src/invites.js";
+import { admin, freshClient, signUpFixture as signUpHouseholdFixture, signUpOutsider as signUpOutsiderFixture } from "./helpers.js";
 
-const admin = createServiceRoleClient();
 const createdUserIds: string[] = [];
 const createdHouseholdIds: string[] = [];
 const redirectTo = "http://127.0.0.1:5173/accept-invite";
 
-function freshClient(): DataAccessClient {
-  const { url, anonKey } = loadSupabaseEnv();
-  return createClient(url, anonKey) as DataAccessClient;
+function signUpFixture(householdName: string) {
+  return signUpHouseholdFixture(householdName, createdUserIds, createdHouseholdIds);
 }
 
-function freshCredentials() {
-  return { email: `${randomUUID()}@example.test`, password: randomUUID() };
-}
-
-async function signUpFixture(householdName: string): Promise<{ client: DataAccessClient; identity: CaregiverIdentity }> {
-  const client = freshClient();
-  const { email, password } = freshCredentials();
-  const identity = await signUpAndCreateHousehold(client, {
-    email,
-    password,
-    displayName: `Caregiver for ${householdName}`,
-    householdName,
-  });
-  createdUserIds.push(identity.userId);
-  createdHouseholdIds.push(identity.householdId);
-  return { client, identity };
-}
-
-/** A confirmed caregiver-less auth user -- for tests exercising the caregiver
- * insert policy directly rather than through the founding/joining flows. */
-async function signUpOutsider(): Promise<{ userId: string; client: DataAccessClient }> {
-  const { email, password } = freshCredentials();
-  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-  if (error) throw error;
-  createdUserIds.push(data.user.id);
-
-  const client = freshClient();
-  const { error: signInError } = await client.auth.signInWithPassword({ email, password });
-  if (signInError) throw signInError;
-
-  return { userId: data.user.id, client };
+function signUpOutsider() {
+  return signUpOutsiderFixture(createdUserIds);
 }
 
 /**

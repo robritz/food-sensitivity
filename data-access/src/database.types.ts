@@ -66,6 +66,38 @@ export type Database = {
           },
         ]
       }
+      child: {
+        Row: {
+          birthdate: string
+          created_at: string
+          household_id: string
+          id: string
+          name: string
+        }
+        Insert: {
+          birthdate: string
+          created_at?: string
+          household_id: string
+          id?: string
+          name: string
+        }
+        Update: {
+          birthdate?: string
+          created_at?: string
+          household_id?: string
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "child_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       household: {
         Row: {
           created_at: string
