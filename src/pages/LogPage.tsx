@@ -155,6 +155,15 @@ export function LogPage() {
         </button>
       </form>
 
+      <ul>
+        {foods.length === 0 && <li>No foods yet.</li>}
+        {foods.map((food) => (
+          <li key={food.id}>
+            {food.name} — {nameById(categories, food.categoryId)}
+          </li>
+        ))}
+      </ul>
+
       <h2>Log an entry</h2>
       {foods.length === 0 || children.length === 0 ? (
         <p>Add a food and a child before logging an entry.</p>
