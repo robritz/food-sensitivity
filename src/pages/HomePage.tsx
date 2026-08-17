@@ -1,5 +1,5 @@
 import { signOut } from '@food-tracker/data-access'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { useAuth } from '../lib/useAuth'
 
@@ -22,6 +22,9 @@ export function HomePage() {
         </p>
       )}
       <p>Home placeholder — food log lands here.</p>
+      <p>
+        <Link to="/invite">Invite a caregiver</Link>
+      </p>
       <button type="button" onClick={handleSignOut}>
         Sign out
       </button>

@@ -84,6 +84,45 @@ export type Database = {
         }
         Relationships: []
       }
+      household_invite: {
+        Row: {
+          created_at: string
+          email: string
+          household_id: string
+          id: string
+          invited_by: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          household_id: string
+          id?: string
+          invited_by: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          household_id?: string
+          id?: string
+          invited_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_invite_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_invite_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "caregiver"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -92,6 +131,10 @@ export type Database = {
       current_household_id: { Args: never; Returns: string }
       household_has_caregiver: {
         Args: { target_household_id: string }
+        Returns: boolean
+      }
+      household_has_pending_invite: {
+        Args: { invitee_email: string; target_household_id: string }
         Returns: boolean
       }
     }

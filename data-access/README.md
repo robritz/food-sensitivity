@@ -38,6 +38,22 @@ changed the project config.
 3. `npm run gen:types` to regenerate `src/database.types.ts`.
 4. `npm test`.
 
+## Edge Functions
+
+Some operations (e.g. sending a household invite email) require the
+service-role key, which the browser must never hold. These live as Supabase
+Edge Functions under `../supabase/functions/`, called from the data-access
+layer via `client.functions.invoke(...)`.
+
+`supabase start` auto-serves whatever's under `../supabase/functions/` --
+but only functions that existed at start time. After adding a new function
+directory, restart the stack (`npm run supabase:stop && npm run
+supabase:start`) so it's picked up; editing an existing function's code
+hot-reloads without a restart.
+
+`npm run supabase:functions:deploy` pushes all functions to the linked
+hosted project.
+
 ## Hosted project
 
 `scripts/provision-supabase.sh` is an interactive wizard that walks through
