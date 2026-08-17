@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main via PR #2, #3, #4
 
-- [ ] Supabase project created; connection config available via environment variables
-- [ ] `household` and `caregiver` tables exist, with caregiver linked to a Supabase Auth user
-- [ ] Row Level Security is enabled on all household-owned tables, scoping reads/writes to the caller's household
-- [ ] A local Supabase instance can be started via the Supabase CLI, for integration testing
-- [ ] The data-access layer skeleton exists as the single module future tickets extend, with an initial integration test proving RLS rejects cross-household access
+- [x] Supabase project created; connection config available via environment variables
+- [x] `household` and `caregiver` tables exist, with caregiver linked to a Supabase Auth user
+- [x] Row Level Security is enabled on all household-owned tables, scoping reads/writes to the caller's household
+- [x] A local Supabase instance can be started via the Supabase CLI, for integration testing
+- [x] The data-access layer skeleton exists as the single module future tickets extend, with an initial integration test proving RLS rejects cross-household access

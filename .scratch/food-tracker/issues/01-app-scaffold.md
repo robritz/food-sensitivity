@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main via PR #1
 
-- [ ] Vite + React + TypeScript project builds and runs locally
-- [ ] PWA manifest and service worker configured; app is installable on a mobile browser
-- [ ] Basic routing skeleton in place (e.g., placeholder routes for home/login)
-- [ ] Linting and a test runner are configured and passing on an empty test suite
-- [ ] `CLAUDE.md` notes how to run the dev server
+- [x] Vite + React + TypeScript project builds and runs locally
+- [x] PWA manifest and service worker configured; app is installable on a mobile browser
+- [x] Basic routing skeleton in place (e.g., placeholder routes for home/login)
+- [x] Linting and a test runner are configured and passing on an empty test suite
+- [x] `CLAUDE.md` notes how to run the dev server
