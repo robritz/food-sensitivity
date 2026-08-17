@@ -5,6 +5,7 @@ import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { ChildrenPage } from './pages/ChildrenPage'
 import { HomePage } from './pages/HomePage'
 import { InviteCaregiverPage } from './pages/InviteCaregiverPage'
+import { LogPage } from './pages/LogPage'
 import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
 
@@ -33,6 +34,14 @@ function App() {
           element={
             <RequireAuth>
               <ChildrenPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/log"
+          element={
+            <RequireAuth>
+              <LogPage />
             </RequireAuth>
           }
         />
