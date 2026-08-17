@@ -23,6 +23,9 @@ export function HomePage() {
       )}
       <p>Home placeholder — food log lands here.</p>
       <p>
+        <Link to="/children">Children</Link>
+      </p>
+      <p>
         <Link to="/invite">Invite a caregiver</Link>
       </p>
       <button type="button" onClick={handleSignOut}>
