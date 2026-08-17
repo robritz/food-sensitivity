@@ -3,14 +3,20 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "data-access"
+  ],
   "scripts": {
+    "predev": "npm run build --workspace @food-tracker/data-access",
     "dev": "vite",
+    "prebuild": "npm run build --workspace @food-tracker/data-access",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run"
   },
   "dependencies": {
+    "@food-tracker/data-access": "*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"

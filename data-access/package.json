@@ -4,6 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "description": "Supabase-backed data-access layer, extended by later food-tracker feature tickets.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit",

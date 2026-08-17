@@ -22,7 +22,7 @@ function readEnv(name: string): string {
 // appends /rest/v1 itself, so a URL that already has it produces a doubled
 // path and PostgREST fails with "Invalid path specified in request URL"
 // (PGRST125), which gives no hint what's wrong. Strip it defensively.
-function normalizeSupabaseUrl(url: string): string {
+export function normalizeSupabaseUrl(url: string): string {
   return url.replace(/\/(rest|auth|graphql|storage|functions)\/v1\/?$/, "").replace(/\/$/, "");
 }
 
