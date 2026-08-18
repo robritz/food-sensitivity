@@ -139,23 +139,24 @@ export function LogPage() {
     )
   }
 
+  // Reuses the selected Food if the caregiver picked a search result;
+  // otherwise the typed name hasn't matched anything, so creates a new Food
+  // under the chosen category before logging against it.
+  async function resolveFoodId(): Promise<string> {
+    if (selectedFood) return selectedFood.id
+    const name = foodInputValue.trim()
+    if (name === '') throw new Error('Choose or enter a food.')
+    const newFood = await addFood(dataAccessClient, { categoryId: newFoodCategoryId, name })
+    setFoods((current) => [...current, newFood].sort((a, b) => a.name.localeCompare(b.name)))
+    return newFood.id
+  }
+
   async function handleAddEntry(event: FormEvent) {
     event.preventDefault()
     setEntryError(null)
     setAddingEntry(true)
     try {
-      // Reuse the selected Food if the caregiver picked a search result;
-      // otherwise the typed name hasn't matched anything, so create a new
-      // Food under the chosen category before logging against it.
-      let foodId = selectedFood?.id
-      if (!foodId) {
-        const name = foodInputValue.trim()
-        if (name === '') throw new Error('Choose or enter a food.')
-        const newFood = await addFood(dataAccessClient, { categoryId: newFoodCategoryId, name })
-        setFoods((current) => [...current, newFood].sort((a, b) => a.name.localeCompare(b.name)))
-        foodId = newFood.id
-      }
-
+      const foodId = await resolveFoodId()
       const entry = await addLogEntry(dataAccessClient, {
         foodId,
         childId: entryChildId,
@@ -356,6 +357,24 @@ export function LogPage() {
                 </>
               }
             />
+          </ListItem>
+        ))}
+      </List>
+
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="h6" component="h2" gutterBottom>
+        All foods
+      </Typography>
+      <List dense sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+        {foods.length === 0 && (
+          <ListItem>
+            <ListItemText primary="No foods yet." />
+          </ListItem>
+        )}
+        {foods.map((food) => (
+          <ListItem key={food.id}>
+            <ListItemText primary={food.name} secondary={nameById(categories, food.categoryId)} />
           </ListItem>
         ))}
       </List>
