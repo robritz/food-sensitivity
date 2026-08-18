@@ -19,7 +19,7 @@ export { addChild, listChildren } from "./children.js";
 export type { AddChildInput, Child } from "./children.js";
 export { listCategories, listReasonTags } from "./catalog.js";
 export type { Category, ReasonTag } from "./catalog.js";
-export { addFood, listFoods } from "./foods.js";
+export { addFood, listFoods, searchFoods } from "./foods.js";
 export type { AddFoodInput, Food } from "./foods.js";
 export { addLogEntry, listLogEntries } from "./logEntries.js";
 export type { AddLogEntryInput, LogEntry, LogEntryStatus } from "./logEntries.js";
