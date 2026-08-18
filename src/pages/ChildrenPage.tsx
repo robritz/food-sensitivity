@@ -1,6 +1,18 @@
 import { addChild, listChildren, type Child } from '@food-tracker/data-access'
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  List,
+  ListItem,
+  ListItemText,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
 export function ChildrenPage() {
@@ -47,46 +59,51 @@ export function ChildrenPage() {
   }
 
   return (
-    <main>
-      <h1>Children</h1>
-
-      {loading && <p>Loading…</p>}
-      {loadError && <p role="alert">{loadError}</p>}
+    <AppLayout title="Children">
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress />
+        </Box>
+      )}
+      {loadError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {loadError}
+        </Alert>
+      )}
       {!loading && !loadError && (
-        <ul>
-          {children.length === 0 && <li>No children yet.</li>}
+        <List sx={{ bgcolor: 'background.paper', borderRadius: 1, mb: 3 }}>
+          {children.length === 0 && (
+            <ListItem>
+              <ListItemText primary="No children yet." />
+            </ListItem>
+          )}
           {children.map((child) => (
-            <li key={child.id}>
-              {child.name} — {child.birthdate}
-            </li>
+            <ListItem key={child.id}>
+              <ListItemText primary={child.name} secondary={child.birthdate} />
+            </ListItem>
           ))}
-        </ul>
+        </List>
       )}
 
-      <h2>Add a child</h2>
-      <form onSubmit={handleSubmit}>
-        <label>
-          Name
-          <input type="text" value={name} onChange={(event) => setName(event.target.value)} required />
-        </label>
-        <label>
-          Birthdate
-          <input
-            type="date"
-            value={birthdate}
-            onChange={(event) => setBirthdate(event.target.value)}
-            required
-          />
-        </label>
-        {submitError && <p role="alert">{submitError}</p>}
-        <button type="submit" disabled={submitting}>
+      <Typography variant="h6" component="h2" gutterBottom>
+        Add a child
+      </Typography>
+      <Stack component="form" onSubmit={handleSubmit} spacing={2} noValidate>
+        <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} required fullWidth />
+        <TextField
+          label="Birthdate"
+          type="date"
+          value={birthdate}
+          onChange={(event) => setBirthdate(event.target.value)}
+          required
+          fullWidth
+          slotProps={{ inputLabel: { shrink: true } }}
+        />
+        {submitError && <Alert severity="error">{submitError}</Alert>}
+        <Button type="submit" variant="contained" disabled={submitting}>
           {submitting ? 'Adding…' : 'Add child'}
-        </button>
-      </form>
-
-      <p>
-        <Link to="/">Back home</Link>
-      </p>
-    </main>
+        </Button>
+      </Stack>
+    </AppLayout>
   )
 }

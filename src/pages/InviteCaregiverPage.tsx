@@ -1,6 +1,7 @@
 import { inviteCaregiverByEmail } from '@food-tracker/data-access'
+import { Alert, Button, Stack, TextField } from '@mui/material'
 import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
 export function InviteCaregiverPage() {
@@ -27,31 +28,26 @@ export function InviteCaregiverPage() {
   }
 
   return (
-    <main>
-      <h1>Invite a caregiver</h1>
+    <AppLayout title="Invite a caregiver">
       {sent ? (
-        <p>Invite sent to {email}.</p>
+        <Alert severity="success">Invite sent to {email}.</Alert>
       ) : (
-        <form onSubmit={handleSubmit}>
-          <label>
-            Their email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              autoComplete="email"
-            />
-          </label>
-          {error && <p role="alert">{error}</p>}
-          <button type="submit" disabled={submitting}>
+        <Stack component="form" onSubmit={handleSubmit} spacing={2} noValidate>
+          <TextField
+            label="Their email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+            autoComplete="email"
+            fullWidth
+          />
+          {error && <Alert severity="error">{error}</Alert>}
+          <Button type="submit" variant="contained" disabled={submitting}>
             {submitting ? 'Sending…' : 'Send invite'}
-          </button>
-        </form>
+          </Button>
+        </Stack>
       )}
-      <p>
-        <Link to="/">Back home</Link>
-      </p>
-    </main>
+    </AppLayout>
   )
 }
