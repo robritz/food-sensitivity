@@ -13,8 +13,32 @@ import {
   type LogEntryStatus,
   type ReasonTag,
 } from '@food-tracker/data-access'
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  CircularProgress,
+  Divider,
+  FormControl,
+  FormControlLabel,
+  FormGroup,
+  FormLabel,
+  InputLabel,
+  List,
+  ListItem,
+  ListItemText,
+  MenuItem,
+  Radio,
+  RadioGroup,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
@@ -126,132 +150,194 @@ export function LogPage() {
     return ids.map((id) => nameById(reasonTags, id)).join(', ')
   }
 
-  if (loading) return <p>Loading…</p>
-  if (loadError) return <p role="alert">{loadError}</p>
+  if (loading) {
+    return (
+      <AppLayout title="Food log">
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress />
+        </Box>
+      </AppLayout>
+    )
+  }
+  if (loadError) {
+    return (
+      <AppLayout title="Food log">
+        <Alert severity="error">{loadError}</Alert>
+      </AppLayout>
+    )
+  }
 
   return (
-    <main>
-      <h1>Food log</h1>
-
-      <h2>Add a food</h2>
-      <form onSubmit={handleAddFood}>
-        <label>
-          Category
-          <select value={foodCategoryId} onChange={(event) => setFoodCategoryId(event.target.value)} required>
+    <AppLayout title="Food log">
+      <Typography variant="h6" component="h2" gutterBottom>
+        Add a food
+      </Typography>
+      <Stack component="form" onSubmit={handleAddFood} spacing={2} noValidate sx={{ mb: 2 }}>
+        <FormControl required fullWidth>
+          <InputLabel id="food-category-label">Category</InputLabel>
+          <Select
+            labelId="food-category-label"
+            label="Category"
+            value={foodCategoryId}
+            onChange={(event) => setFoodCategoryId(event.target.value)}
+          >
             {categories.map((category) => (
-              <option key={category.id} value={category.id}>
+              <MenuItem key={category.id} value={category.id}>
                 {category.name}
-              </option>
+              </MenuItem>
             ))}
-          </select>
-        </label>
-        <label>
-          Brand/product name
-          <input type="text" value={foodName} onChange={(event) => setFoodName(event.target.value)} required />
-        </label>
-        {foodError && <p role="alert">{foodError}</p>}
-        <button type="submit" disabled={addingFood || categories.length === 0}>
+          </Select>
+        </FormControl>
+        <TextField
+          label="Brand/product name"
+          value={foodName}
+          onChange={(event) => setFoodName(event.target.value)}
+          required
+          fullWidth
+        />
+        {foodError && <Alert severity="error">{foodError}</Alert>}
+        <Button type="submit" variant="contained" disabled={addingFood || categories.length === 0}>
           {addingFood ? 'Adding…' : 'Add food'}
-        </button>
-      </form>
+        </Button>
+      </Stack>
 
-      <ul>
-        {foods.length === 0 && <li>No foods yet.</li>}
+      <List dense sx={{ bgcolor: 'background.paper', borderRadius: 1, mb: 3 }}>
+        {foods.length === 0 && (
+          <ListItem>
+            <ListItemText primary="No foods yet." />
+          </ListItem>
+        )}
         {foods.map((food) => (
-          <li key={food.id}>
-            {food.name} — {nameById(categories, food.categoryId)}
-          </li>
+          <ListItem key={food.id}>
+            <ListItemText primary={food.name} secondary={nameById(categories, food.categoryId)} />
+          </ListItem>
         ))}
-      </ul>
+      </List>
 
-      <h2>Log an entry</h2>
+      <Divider sx={{ mb: 3 }} />
+
+      <Typography variant="h6" component="h2" gutterBottom>
+        Log an entry
+      </Typography>
       {foods.length === 0 || children.length === 0 ? (
-        <p>Add a food and a child before logging an entry.</p>
+        <Typography color="text.secondary">Add a food and a child before logging an entry.</Typography>
       ) : (
-        <form onSubmit={handleAddEntry}>
-          <label>
-            Food
-            <select value={entryFoodId} onChange={(event) => setEntryFoodId(event.target.value)} required>
-              <option value="" disabled>
+        <Stack component="form" onSubmit={handleAddEntry} spacing={2} noValidate sx={{ mb: 3 }}>
+          <FormControl required fullWidth>
+            <InputLabel id="entry-food-label">Food</InputLabel>
+            <Select
+              labelId="entry-food-label"
+              label="Food"
+              value={entryFoodId}
+              onChange={(event) => setEntryFoodId(event.target.value)}
+              displayEmpty
+            >
+              <MenuItem value="" disabled>
                 Choose a food
-              </option>
+              </MenuItem>
               {foods.map((food) => (
-                <option key={food.id} value={food.id}>
+                <MenuItem key={food.id} value={food.id}>
                   {food.name}
-                </option>
+                </MenuItem>
               ))}
-            </select>
-          </label>
-          <label>
-            Child
-            <select value={entryChildId} onChange={(event) => setEntryChildId(event.target.value)} required>
-              <option value="" disabled>
+            </Select>
+          </FormControl>
+          <FormControl required fullWidth>
+            <InputLabel id="entry-child-label">Child</InputLabel>
+            <Select
+              labelId="entry-child-label"
+              label="Child"
+              value={entryChildId}
+              onChange={(event) => setEntryChildId(event.target.value)}
+              displayEmpty
+            >
+              <MenuItem value="" disabled>
                 Choose a child
-              </option>
+              </MenuItem>
               {children.map((child) => (
-                <option key={child.id} value={child.id}>
+                <MenuItem key={child.id} value={child.id}>
                   {child.name}
-                </option>
+                </MenuItem>
               ))}
-            </select>
-          </label>
+            </Select>
+          </FormControl>
 
-          <fieldset>
-            <legend>Status</legend>
-            {STATUSES.map((status) => (
-              <label key={status}>
-                <input
-                  type="radio"
-                  name="status"
-                  value={status}
-                  checked={entryStatus === status}
-                  onChange={() => setEntryStatus(status)}
+          <FormControl component="fieldset">
+            <FormLabel component="legend">Status</FormLabel>
+            <RadioGroup
+              row
+              value={entryStatus}
+              onChange={(event) => setEntryStatus(event.target.value as LogEntryStatus)}
+            >
+              {STATUSES.map((status) => (
+                <FormControlLabel key={status} value={status} control={<Radio />} label={statusLabel(status)} />
+              ))}
+            </RadioGroup>
+          </FormControl>
+
+          <FormControl component="fieldset">
+            <FormLabel component="legend">Reasons</FormLabel>
+            <FormGroup row>
+              {reasonTags.map((tag) => (
+                <FormControlLabel
+                  key={tag.id}
+                  control={
+                    <Checkbox checked={entryReasonTagIds.includes(tag.id)} onChange={() => toggleReasonTag(tag.id)} />
+                  }
+                  label={tag.name}
                 />
-                {statusLabel(status)}
-              </label>
-            ))}
-          </fieldset>
+              ))}
+            </FormGroup>
+          </FormControl>
 
-          <fieldset>
-            <legend>Reasons</legend>
-            {reasonTags.map((tag) => (
-              <label key={tag.id}>
-                <input
-                  type="checkbox"
-                  checked={entryReasonTagIds.includes(tag.id)}
-                  onChange={() => toggleReasonTag(tag.id)}
-                />
-                {tag.name}
-              </label>
-            ))}
-          </fieldset>
+          <TextField
+            label="Notes"
+            value={entryNotes}
+            onChange={(event) => setEntryNotes(event.target.value)}
+            multiline
+            minRows={2}
+            fullWidth
+          />
 
-          <label>
-            Notes
-            <textarea value={entryNotes} onChange={(event) => setEntryNotes(event.target.value)} />
-          </label>
-
-          {entryError && <p role="alert">{entryError}</p>}
-          <button type="submit" disabled={addingEntry || entryReasonTagIds.length === 0}>
+          {entryError && <Alert severity="error">{entryError}</Alert>}
+          <Button type="submit" variant="contained" disabled={addingEntry || entryReasonTagIds.length === 0}>
             {addingEntry ? 'Logging…' : 'Log entry'}
-          </button>
-        </form>
+          </Button>
+        </Stack>
       )}
 
-      <h2>Recent entries</h2>
-      <ul>
-        {entries.length === 0 && <li>No entries yet.</li>}
-        {entries.map((entry) => (
-          <li key={entry.id}>
-            {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)} — {statusLabel(entry.status)} (
-            {reasonTagNames(entry.reasonTagIds)}){entry.notes ? ` — "${entry.notes}"` : ''}
-          </li>
-        ))}
-      </ul>
+      <Divider sx={{ mb: 3 }} />
 
-      <p>
-        <Link to="/">Back home</Link>
-      </p>
-    </main>
+      <Typography variant="h6" component="h2" gutterBottom>
+        Recent entries
+      </Typography>
+      <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+        {entries.length === 0 && (
+          <ListItem>
+            <ListItemText primary="No entries yet." />
+          </ListItem>
+        )}
+        {entries.map((entry) => (
+          <ListItem key={entry.id} alignItems="flex-start">
+            <ListItemText
+              primary={
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Typography component="span" sx={{ fontWeight: 500 }}>
+                    {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)}
+                  </Typography>
+                  <Chip size="small" label={statusLabel(entry.status)} />
+                </Stack>
+              }
+              secondary={
+                <>
+                  {reasonTagNames(entry.reasonTagIds)}
+                  {entry.notes ? ` — "${entry.notes}"` : ''}
+                </>
+              }
+            />
+          </ListItem>
+        ))}
+      </List>
+    </AppLayout>
   )
 }

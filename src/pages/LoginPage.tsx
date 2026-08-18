@@ -1,6 +1,8 @@
 import { signInWithPassword } from '@food-tracker/data-access'
+import { Alert, Button, Link as MuiLink, Stack, TextField, Typography } from '@mui/material'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { AuthLayout } from '../components/AuthLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { useAuth } from '../lib/useAuth'
 
@@ -27,37 +29,37 @@ export function LoginPage() {
   }
 
   return (
-    <main>
-      <h1>Log in</h1>
-      <form onSubmit={handleSubmit}>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-            autoComplete="email"
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            autoComplete="current-password"
-          />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
+    <AuthLayout title="Log in">
+      <Stack component="form" onSubmit={handleSubmit} spacing={2} noValidate>
+        <TextField
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          required
+          autoComplete="email"
+          fullWidth
+        />
+        <TextField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+          autoComplete="current-password"
+          fullWidth
+        />
+        {error && <Alert severity="error">{error}</Alert>}
+        <Button type="submit" variant="contained" disabled={submitting} fullWidth>
           {submitting ? 'Logging in…' : 'Log in'}
-        </button>
-      </form>
-      <p>
-        Don't have a household yet? <Link to="/signup">Sign up</Link>
-      </p>
-    </main>
+        </Button>
+        <Typography variant="body2">
+          Don't have a household yet?{' '}
+          <MuiLink component={Link} to="/signup">
+            Sign up
+          </MuiLink>
+        </Typography>
+      </Stack>
+    </AuthLayout>
   )
 }

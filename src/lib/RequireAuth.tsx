@@ -1,3 +1,4 @@
+import { Box, CircularProgress } from '@mui/material'
 import type { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from './useAuth'
@@ -7,9 +8,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <main>
-        <p>Loading…</p>
-      </main>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <CircularProgress />
+      </Box>
     )
   }
 

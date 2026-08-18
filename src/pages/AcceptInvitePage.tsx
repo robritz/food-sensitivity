@@ -1,6 +1,8 @@
 import { acceptHouseholdInvite } from '@food-tracker/data-access'
+import { Alert, Button, Stack, TextField } from '@mui/material'
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AuthLayout } from '../components/AuthLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { useAuth } from '../lib/useAuth'
 
@@ -36,35 +38,31 @@ export function AcceptInvitePage() {
   }
 
   return (
-    <main>
-      <h1>Join your household</h1>
-      <form onSubmit={handleSubmit}>
-        <label>
-          Your name
-          <input
-            type="text"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            required
-            autoComplete="name"
-          />
-        </label>
-        <label>
-          Choose a password
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            minLength={6}
-            autoComplete="new-password"
-          />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
+    <AuthLayout title="Join your household">
+      <Stack component="form" onSubmit={handleSubmit} spacing={2} noValidate>
+        <TextField
+          label="Your name"
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          required
+          autoComplete="name"
+          fullWidth
+        />
+        <TextField
+          label="Choose a password"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+          slotProps={{ htmlInput: { minLength: 6 } }}
+          autoComplete="new-password"
+          fullWidth
+        />
+        {error && <Alert severity="error">{error}</Alert>}
+        <Button type="submit" variant="contained" disabled={submitting} fullWidth>
           {submitting ? 'Joining…' : 'Join household'}
-        </button>
-      </form>
-    </main>
+        </Button>
+      </Stack>
+    </AuthLayout>
   )
 }
