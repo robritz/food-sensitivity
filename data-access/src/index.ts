@@ -17,7 +17,7 @@ export { acceptHouseholdInvite, inviteCaregiverByEmail } from "./invites.js";
 export type { AcceptHouseholdInviteInput, InviteCaregiverInput } from "./invites.js";
 export { addChild, listChildren } from "./children.js";
 export type { AddChildInput, Child } from "./children.js";
-export { listCategories, listReasonTags } from "./catalog.js";
+export { addCategory, addReasonTag, listCategories, listReasonTags } from "./catalog.js";
 export type { Category, ReasonTag } from "./catalog.js";
 export { addFood, listFoods, searchFoods } from "./foods.js";
 export type { AddFoodInput, Food } from "./foods.js";

@@ -54,3 +54,26 @@ export async function signUpOutsider(createdUserIds: string[]): Promise<{ userId
 
   return { userId: data.user.id, client };
 }
+
+/** Adds a second caregiver directly to an already-founded household --
+ * inserted as service-role so tests can exercise visibility to a fellow
+ * caregiver without going through the invite flow. */
+export async function addCaregiverToHousehold(
+  householdId: string,
+  createdUserIds: string[],
+): Promise<DataAccessClient> {
+  const { email, password } = freshCredentials();
+  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+  if (error) throw error;
+  createdUserIds.push(data.user.id);
+
+  const { error: caregiverError } = await admin
+    .from("caregiver")
+    .insert({ household_id: householdId, user_id: data.user.id, display_name: "Second Caregiver" });
+  if (caregiverError) throw caregiverError;
+
+  const client = freshClient();
+  const { error: signInError } = await client.auth.signInWithPassword({ email, password });
+  if (signInError) throw signInError;
+  return client;
+}
