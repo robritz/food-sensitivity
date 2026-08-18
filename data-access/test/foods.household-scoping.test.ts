@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { listCategories } from "../src/catalog.js";
-import { addFood, listFoods } from "../src/foods.js";
+import { addFood, listFoods, searchFoods } from "../src/foods.js";
 import type { DataAccessClient } from "../src/client.js";
 import { admin, signUpFixture as signUpHouseholdFixture } from "./helpers.js";
 
@@ -48,5 +48,29 @@ describe("listFoods", () => {
     const foodsSeenByB = await listFoods(householdB.client);
 
     expect(foodsSeenByB.map((f) => f.name)).not.toContain("Only In A");
+  });
+});
+
+describe("searchFoods", () => {
+  it("matches foods by a substring of their brand/product name", async () => {
+    const founder = await signUpFixture("Household Searching Foods");
+    const categoryId = await proteinCategoryId(founder.client);
+    await addFood(founder.client, { categoryId, name: "Oscar Mayer Classic" });
+    await addFood(founder.client, { categoryId, name: "Ballpark Angus" });
+
+    const results = await searchFoods(founder.client, "mayer");
+
+    expect(results.map((f) => f.name)).toEqual(["Oscar Mayer Classic"]);
+  });
+
+  it("scopes search results to the caller's household -- another household's matching foods aren't visible", async () => {
+    const householdA = await signUpFixture("Household A Search");
+    const householdB = await signUpFixture("Household B Search");
+    const categoryId = await proteinCategoryId(householdA.client);
+    await addFood(householdA.client, { categoryId, name: "Only In A Nuggets" });
+
+    const resultsForB = await searchFoods(householdB.client, "nuggets");
+
+    expect(resultsForB).toEqual([]);
   });
 });

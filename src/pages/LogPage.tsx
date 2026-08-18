@@ -6,6 +6,7 @@ import {
   listFoods,
   listLogEntries,
   listReasonTags,
+  searchFoods,
   type Category,
   type Child,
   type Food,
@@ -15,6 +16,7 @@ import {
 } from '@food-tracker/data-access'
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -41,6 +43,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
+const FOOD_SEARCH_DEBOUNCE_MS = 250
+
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
 function statusLabel(status: LogEntryStatus): string {
@@ -56,12 +60,13 @@ export function LogPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [foodCategoryId, setFoodCategoryId] = useState('')
-  const [foodName, setFoodName] = useState('')
-  const [foodError, setFoodError] = useState<string | null>(null)
-  const [addingFood, setAddingFood] = useState(false)
+  const [newFoodCategoryId, setNewFoodCategoryId] = useState('')
 
-  const [entryFoodId, setEntryFoodId] = useState('')
+  const [foodInputValue, setFoodInputValue] = useState('')
+  const [selectedFood, setSelectedFood] = useState<Food | null>(null)
+  const [foodOptions, setFoodOptions] = useState<Food[]>([])
+  const [foodSearchLoading, setFoodSearchLoading] = useState(false)
+
   const [entryChildId, setEntryChildId] = useState('')
   const [entryStatus, setEntryStatus] = useState<LogEntryStatus>('liked')
   const [entryReasonTagIds, setEntryReasonTagIds] = useState<string[]>([])
@@ -85,7 +90,7 @@ export function LogPage() {
         setCategories(categoriesResult)
         setReasonTags(reasonTagsResult)
         setEntries(entriesResult)
-        if (categoriesResult.length > 0) setFoodCategoryId(categoriesResult[0].id)
+        if (categoriesResult.length > 0) setNewFoodCategoryId(categoriesResult[0].id)
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load the food log.')
@@ -98,21 +103,35 @@ export function LogPage() {
     }
   }, [])
 
-  async function handleAddFood(event: FormEvent) {
-    event.preventDefault()
-    setFoodError(null)
-    setAddingFood(true)
-    try {
-      const food = await addFood(dataAccessClient, { categoryId: foodCategoryId, name: foodName })
-      setFoods((current) => [...current, food].sort((a, b) => a.name.localeCompare(b.name)))
-      setEntryFoodId(food.id)
-      setFoodName('')
-    } catch (err) {
-      setFoodError(err instanceof Error ? err.message : 'Could not add food.')
-    } finally {
-      setAddingFood(false)
+  // Searches existing household Foods as the caregiver types, so they can
+  // reuse a match instead of creating a duplicate. Skipped once a food has
+  // been selected and the input still reflects its name.
+  useEffect(() => {
+    const query = foodInputValue.trim()
+    if (selectedFood && selectedFood.name === foodInputValue) return
+    if (query === '') {
+      setFoodOptions([])
+      return
     }
-  }
+    let cancelled = false
+    setFoodSearchLoading(true)
+    const timeoutId = setTimeout(() => {
+      searchFoods(dataAccessClient, query)
+        .then((results) => {
+          if (!cancelled) setFoodOptions(results)
+        })
+        .catch(() => {
+          if (!cancelled) setFoodOptions([])
+        })
+        .finally(() => {
+          if (!cancelled) setFoodSearchLoading(false)
+        })
+    }, FOOD_SEARCH_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
+  }, [foodInputValue, selectedFood])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
@@ -125,14 +144,29 @@ export function LogPage() {
     setEntryError(null)
     setAddingEntry(true)
     try {
+      // Reuse the selected Food if the caregiver picked a search result;
+      // otherwise the typed name hasn't matched anything, so create a new
+      // Food under the chosen category before logging against it.
+      let foodId = selectedFood?.id
+      if (!foodId) {
+        const name = foodInputValue.trim()
+        if (name === '') throw new Error('Choose or enter a food.')
+        const newFood = await addFood(dataAccessClient, { categoryId: newFoodCategoryId, name })
+        setFoods((current) => [...current, newFood].sort((a, b) => a.name.localeCompare(b.name)))
+        foodId = newFood.id
+      }
+
       const entry = await addLogEntry(dataAccessClient, {
-        foodId: entryFoodId,
+        foodId,
         childId: entryChildId,
         status: entryStatus,
         reasonTagIds: entryReasonTagIds,
         notes: entryNotes.trim() === '' ? undefined : entryNotes,
       })
       setEntries((current) => [entry, ...current])
+      setSelectedFood(null)
+      setFoodInputValue('')
+      setFoodOptions([])
       setEntryReasonTagIds([])
       setEntryNotes('')
     } catch (err) {
@@ -170,78 +204,56 @@ export function LogPage() {
   return (
     <AppLayout title="Food log">
       <Typography variant="h6" component="h2" gutterBottom>
-        Add a food
-      </Typography>
-      <Stack component="form" onSubmit={handleAddFood} spacing={2} noValidate sx={{ mb: 2 }}>
-        <FormControl required fullWidth>
-          <InputLabel id="food-category-label">Category</InputLabel>
-          <Select
-            labelId="food-category-label"
-            label="Category"
-            value={foodCategoryId}
-            onChange={(event) => setFoodCategoryId(event.target.value)}
-          >
-            {categories.map((category) => (
-              <MenuItem key={category.id} value={category.id}>
-                {category.name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <TextField
-          label="Brand/product name"
-          value={foodName}
-          onChange={(event) => setFoodName(event.target.value)}
-          required
-          fullWidth
-        />
-        {foodError && <Alert severity="error">{foodError}</Alert>}
-        <Button type="submit" variant="contained" disabled={addingFood || categories.length === 0}>
-          {addingFood ? 'Adding…' : 'Add food'}
-        </Button>
-      </Stack>
-
-      <List dense sx={{ bgcolor: 'background.paper', borderRadius: 1, mb: 3 }}>
-        {foods.length === 0 && (
-          <ListItem>
-            <ListItemText primary="No foods yet." />
-          </ListItem>
-        )}
-        {foods.map((food) => (
-          <ListItem key={food.id}>
-            <ListItemText primary={food.name} secondary={nameById(categories, food.categoryId)} />
-          </ListItem>
-        ))}
-      </List>
-
-      <Divider sx={{ mb: 3 }} />
-
-      <Typography variant="h6" component="h2" gutterBottom>
         Log an entry
       </Typography>
-      {foods.length === 0 || children.length === 0 ? (
-        <Typography color="text.secondary">Add a food and a child before logging an entry.</Typography>
+      {children.length === 0 ? (
+        <Typography color="text.secondary">Add a child before logging an entry.</Typography>
       ) : (
         <Stack component="form" onSubmit={handleAddEntry} spacing={2} noValidate sx={{ mb: 3 }}>
-          <FormControl required fullWidth>
-            <InputLabel id="entry-food-label">Food</InputLabel>
-            <Select
-              labelId="entry-food-label"
-              label="Food"
-              value={entryFoodId}
-              onChange={(event) => setEntryFoodId(event.target.value)}
-              displayEmpty
-            >
-              <MenuItem value="" disabled>
-                Choose a food
-              </MenuItem>
-              {foods.map((food) => (
-                <MenuItem key={food.id} value={food.id}>
-                  {food.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          <Autocomplete
+            freeSolo
+            filterOptions={(options) => options}
+            options={foodOptions}
+            loading={foodSearchLoading}
+            value={selectedFood}
+            inputValue={foodInputValue}
+            getOptionLabel={(option) => (typeof option === 'string' ? option : option.name)}
+            isOptionEqualToValue={(option, value) =>
+              typeof option !== 'string' && typeof value !== 'string' && option.id === value.id
+            }
+            onInputChange={(_event, newInputValue, reason) => {
+              setFoodInputValue(newInputValue)
+              if (reason === 'input') setSelectedFood(null)
+            }}
+            onChange={(_event, newValue) => {
+              setSelectedFood(newValue && typeof newValue !== 'string' ? newValue : null)
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Food"
+                required
+                helperText="Search for an existing food, or type a new brand/product name."
+              />
+            )}
+          />
+          {!selectedFood && foodInputValue.trim() !== '' && (
+            <FormControl required fullWidth>
+              <InputLabel id="new-food-category-label">New food's category</InputLabel>
+              <Select
+                labelId="new-food-category-label"
+                label="New food's category"
+                value={newFoodCategoryId}
+                onChange={(event) => setNewFoodCategoryId(event.target.value)}
+              >
+                {categories.map((category) => (
+                  <MenuItem key={category.id} value={category.id}>
+                    {category.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
           <FormControl required fullWidth>
             <InputLabel id="entry-child-label">Child</InputLabel>
             <Select
@@ -300,7 +312,16 @@ export function LogPage() {
           />
 
           {entryError && <Alert severity="error">{entryError}</Alert>}
-          <Button type="submit" variant="contained" disabled={addingEntry || entryReasonTagIds.length === 0}>
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={
+              addingEntry ||
+              entryReasonTagIds.length === 0 ||
+              foodInputValue.trim() === '' ||
+              (!selectedFood && newFoodCategoryId === '')
+            }
+          >
             {addingEntry ? 'Logging…' : 'Log entry'}
           </Button>
         </Stack>

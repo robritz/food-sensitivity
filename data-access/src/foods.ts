@@ -53,3 +53,20 @@ export async function listFoods(client: DataAccessClient): Promise<Food[]> {
   if (error) throw error;
   return data.map(toFood);
 }
+
+/** Searches the caller's household Foods by a substring of their
+ * brand/product name, for the entry-creation typeahead -- lets a caregiver
+ * reuse an existing Food instead of creating a duplicate. Relies on RLS to
+ * scope results to the caller's household, the same pattern `listFoods`
+ * uses. Capped at 10 results since it's meant for an in-progress typeahead,
+ * not a full listing. */
+export async function searchFoods(client: DataAccessClient, query: string): Promise<Food[]> {
+  const { data, error } = await client
+    .from("food")
+    .select()
+    .ilike("name", `%${query}%`)
+    .order("name")
+    .limit(10);
+  if (error) throw error;
+  return data.map(toFood);
+}
