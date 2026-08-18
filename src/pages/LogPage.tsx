@@ -422,6 +422,7 @@ export function LogPage() {
             variant="contained"
             disabled={
               addingEntry ||
+              entryChildId === '' ||
               entryReasonTagIds.length === 0 ||
               foodPicker.inputValue.trim() === '' ||
               (!foodPicker.value && !categoryPicker.value && categoryPicker.inputValue.trim() === '')
