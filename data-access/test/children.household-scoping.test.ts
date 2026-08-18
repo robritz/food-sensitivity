@@ -1,30 +1,9 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { addChild, listChildren } from "../src/children.js";
-import { admin, freshClient, freshCredentials, signUpFixture } from "./helpers.js";
-import type { DataAccessClient } from "../src/client.js";
+import { addCaregiverToHousehold, admin, signUpFixture } from "./helpers.js";
 
 const createdUserIds: string[] = [];
 const createdHouseholdIds: string[] = [];
-
-/** Adds a second caregiver directly to an already-founded household --
- * inserted as service-role (like the RLS suite's `seedHousehold`) so this
- * test exercises `listChildren`'s visibility, not the invite flow. */
-async function addCaregiverToHousehold(householdId: string): Promise<DataAccessClient> {
-  const { email, password } = freshCredentials();
-  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-  if (error) throw error;
-  createdUserIds.push(data.user.id);
-
-  const { error: caregiverError } = await admin
-    .from("caregiver")
-    .insert({ household_id: householdId, user_id: data.user.id, display_name: "Second Caregiver" });
-  if (caregiverError) throw caregiverError;
-
-  const client = freshClient();
-  const { error: signInError } = await client.auth.signInWithPassword({ email, password });
-  if (signInError) throw signInError;
-  return client;
-}
 
 afterAll(async () => {
   for (const userId of createdUserIds) {
@@ -72,7 +51,7 @@ describe("listChildren", () => {
     const founder = await signUpFixture("Household With Two Caregivers", createdUserIds, createdHouseholdIds);
     await addChild(founder.client, { name: "Shared Child", birthdate: "2022-06-15" });
 
-    const secondCaregiverClient = await addCaregiverToHousehold(founder.identity.householdId);
+    const secondCaregiverClient = await addCaregiverToHousehold(founder.identity.householdId, createdUserIds);
     const childrenSeenBySecondCaregiver = await listChildren(secondCaregiverClient);
 
     expect(childrenSeenBySecondCaregiver.map((child) => child.name)).toContain("Shared Child");

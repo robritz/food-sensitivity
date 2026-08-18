@@ -1,3 +1,4 @@
+import { getCurrentCaregiver } from "./auth.js";
 import type { DataAccessClient } from "./client.js";
 import type { Tables } from "./database.types.js";
 
@@ -40,4 +41,42 @@ export async function listReasonTags(client: DataAccessClient): Promise<ReasonTa
   const { data, error } = await client.from("reason_tag").select().order("name");
   if (error) throw error;
   return data.map(toReasonTag);
+}
+
+/** Adds a custom category to the caller's own household -- the household is
+ * derived from the caller's session, following the same pattern as
+ * `addFood`. Visible to the whole household afterward via `listCategories`,
+ * same as any other household-scoped row. */
+export async function addCategory(client: DataAccessClient, name: string): Promise<Category> {
+  const identity = await getCurrentCaregiver(client);
+  if (!identity) {
+    throw new Error("No signed-in caregiver -- cannot add a category without a household.");
+  }
+
+  const { data, error } = await client
+    .from("category")
+    .insert({ household_id: identity.householdId, name })
+    .select()
+    .single();
+  if (error) throw error;
+  return toCategory(data);
+}
+
+/** Adds a custom reason tag to the caller's own household -- the household
+ * is derived from the caller's session, following the same pattern as
+ * `addFood`. Visible to the whole household afterward via `listReasonTags`,
+ * same as any other household-scoped row. */
+export async function addReasonTag(client: DataAccessClient, name: string): Promise<ReasonTag> {
+  const identity = await getCurrentCaregiver(client);
+  if (!identity) {
+    throw new Error("No signed-in caregiver -- cannot add a reason tag without a household.");
+  }
+
+  const { data, error } = await client
+    .from("reason_tag")
+    .insert({ household_id: identity.householdId, name })
+    .select()
+    .single();
+  if (error) throw error;
+  return toReasonTag(data);
 }

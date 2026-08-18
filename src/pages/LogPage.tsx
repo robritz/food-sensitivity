@@ -1,6 +1,8 @@
 import {
+  addCategory,
   addFood,
   addLogEntry,
+  addReasonTag,
   listCategories,
   listChildren,
   listFoods,
@@ -51,6 +53,49 @@ function statusLabel(status: LogEntryStatus): string {
   return status[0].toUpperCase() + status.slice(1)
 }
 
+interface NamedOption {
+  id: string
+  name: string
+}
+
+/** Manages the value/inputValue pair for a freeSolo MUI Autocomplete backed
+ * by named options (Food, Category): typing updates the free-typed text and
+ * clears the selection; picking an option syncs both. Ignores MUI's own
+ * 'reset' notification (fired e.g. on blur) -- it would otherwise wipe out
+ * free-typed text that hasn't matched an option; selecting an option updates
+ * the displayed text via onChange instead. */
+function useFreeSoloPicker<T extends NamedOption>() {
+  const [value, setValue] = useState<T | null>(null)
+  const [inputValue, setInputValue] = useState('')
+
+  return {
+    value,
+    inputValue,
+    setValue,
+    setInputValue,
+    autocompleteProps: {
+      value,
+      inputValue,
+      getOptionLabel: (option: T | string) => (typeof option === 'string' ? option : option.name),
+      isOptionEqualToValue: (option: T | string, val: T | string) =>
+        typeof option !== 'string' && typeof val !== 'string' && option.id === val.id,
+      onInputChange: (_event: unknown, newInputValue: string, reason: string) => {
+        if (reason === 'reset') return
+        setInputValue(newInputValue)
+        if (reason === 'input') setValue(null)
+      },
+      onChange: (_event: unknown, newValue: T | string | null) => {
+        if (newValue && typeof newValue !== 'string') {
+          setValue(newValue)
+          setInputValue(newValue.name)
+        } else {
+          setValue(null)
+        }
+      },
+    },
+  }
+}
+
 export function LogPage() {
   const [children, setChildren] = useState<Child[]>([])
   const [foods, setFoods] = useState<Food[]>([])
@@ -60,10 +105,9 @@ export function LogPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [newFoodCategoryId, setNewFoodCategoryId] = useState('')
-
-  const [foodInputValue, setFoodInputValue] = useState('')
-  const [selectedFood, setSelectedFood] = useState<Food | null>(null)
+  const categoryPicker = useFreeSoloPicker<Category>()
+  const { setValue: setDefaultCategory, setInputValue: setDefaultCategoryInputValue } = categoryPicker
+  const foodPicker = useFreeSoloPicker<Food>()
   const [foodOptions, setFoodOptions] = useState<Food[]>([])
   const [foodSearchLoading, setFoodSearchLoading] = useState(false)
 
@@ -73,6 +117,10 @@ export function LogPage() {
   const [entryNotes, setEntryNotes] = useState('')
   const [entryError, setEntryError] = useState<string | null>(null)
   const [addingEntry, setAddingEntry] = useState(false)
+
+  const [newReasonTagInput, setNewReasonTagInput] = useState('')
+  const [addingReasonTag, setAddingReasonTag] = useState(false)
+  const [reasonTagError, setReasonTagError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -90,7 +138,10 @@ export function LogPage() {
         setCategories(categoriesResult)
         setReasonTags(reasonTagsResult)
         setEntries(entriesResult)
-        if (categoriesResult.length > 0) setNewFoodCategoryId(categoriesResult[0].id)
+        if (categoriesResult.length > 0) {
+          setDefaultCategory(categoriesResult[0])
+          setDefaultCategoryInputValue(categoriesResult[0].name)
+        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load the food log.')
@@ -101,14 +152,14 @@ export function LogPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [setDefaultCategory, setDefaultCategoryInputValue])
 
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
   // been selected and the input still reflects its name.
   useEffect(() => {
-    const query = foodInputValue.trim()
-    if (selectedFood && selectedFood.name === foodInputValue) return
+    const query = foodPicker.inputValue.trim()
+    if (foodPicker.value && foodPicker.value.name === foodPicker.inputValue) return
     if (query === '') {
       setFoodOptions([])
       return
@@ -131,7 +182,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [foodInputValue, selectedFood])
+  }, [foodPicker.inputValue, foodPicker.value])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
@@ -139,16 +190,61 @@ export function LogPage() {
     )
   }
 
+  // Finds a same-name match (case-insensitive) among already-loaded named
+  // options -- used before creating a custom category/reason tag so a typo
+  // in casing (e.g. "fruit" vs "Fruit") reuses the existing one instead of
+  // spawning a confusing near-duplicate.
+  function findByNameCaseInsensitive<T extends NamedOption>(options: T[], name: string): T | undefined {
+    return options.find((option) => option.name.toLowerCase() === name.toLowerCase())
+  }
+
+  // Reuses the selected category if the caregiver picked one, or a same-name
+  // existing one if they typed a match by hand; otherwise adds it as a new
+  // custom category for the household (ticket 08) before using it.
+  async function resolveCategoryId(): Promise<string> {
+    if (categoryPicker.value) return categoryPicker.value.id
+    const name = categoryPicker.inputValue.trim()
+    if (name === '') throw new Error('Choose or enter a category.')
+    const existing = findByNameCaseInsensitive(categories, name)
+    if (existing) return existing.id
+    const newCategory = await addCategory(dataAccessClient, name)
+    setCategories((current) => [...current, newCategory].sort((a, b) => a.name.localeCompare(b.name)))
+    return newCategory.id
+  }
+
   // Reuses the selected Food if the caregiver picked a search result;
   // otherwise the typed name hasn't matched anything, so creates a new Food
   // under the chosen category before logging against it.
   async function resolveFoodId(): Promise<string> {
-    if (selectedFood) return selectedFood.id
-    const name = foodInputValue.trim()
+    if (foodPicker.value) return foodPicker.value.id
+    const name = foodPicker.inputValue.trim()
     if (name === '') throw new Error('Choose or enter a food.')
-    const newFood = await addFood(dataAccessClient, { categoryId: newFoodCategoryId, name })
+    const categoryId = await resolveCategoryId()
+    const newFood = await addFood(dataAccessClient, { categoryId, name })
     setFoods((current) => [...current, newFood].sort((a, b) => a.name.localeCompare(b.name)))
     return newFood.id
+  }
+
+  // Adds a new reason tag for the household (ticket 08) and immediately
+  // checks it, since a caregiver adding a tag mid-entry almost always means
+  // to apply it to the entry they're logging. Reuses a same-name existing
+  // tag instead of creating a near-duplicate, same as `resolveCategoryId`.
+  async function handleAddReasonTag() {
+    const name = newReasonTagInput.trim()
+    if (name === '') return
+    setReasonTagError(null)
+    setAddingReasonTag(true)
+    try {
+      const existing = findByNameCaseInsensitive(reasonTags, name)
+      const tag = existing ?? (await addReasonTag(dataAccessClient, name))
+      if (!existing) setReasonTags((current) => [...current, tag].sort((a, b) => a.name.localeCompare(b.name)))
+      setEntryReasonTagIds((current) => (current.includes(tag.id) ? current : [...current, tag.id]))
+      setNewReasonTagInput('')
+    } catch (err) {
+      setReasonTagError(err instanceof Error ? err.message : 'Could not add reason tag.')
+    } finally {
+      setAddingReasonTag(false)
+    }
   }
 
   async function handleAddEntry(event: FormEvent) {
@@ -165,8 +261,8 @@ export function LogPage() {
         notes: entryNotes.trim() === '' ? undefined : entryNotes,
       })
       setEntries((current) => [entry, ...current])
-      setSelectedFood(null)
-      setFoodInputValue('')
+      foodPicker.setValue(null)
+      foodPicker.setInputValue('')
       setFoodOptions([])
       setEntryReasonTagIds([])
       setEntryNotes('')
@@ -216,19 +312,7 @@ export function LogPage() {
             filterOptions={(options) => options}
             options={foodOptions}
             loading={foodSearchLoading}
-            value={selectedFood}
-            inputValue={foodInputValue}
-            getOptionLabel={(option) => (typeof option === 'string' ? option : option.name)}
-            isOptionEqualToValue={(option, value) =>
-              typeof option !== 'string' && typeof value !== 'string' && option.id === value.id
-            }
-            onInputChange={(_event, newInputValue, reason) => {
-              setFoodInputValue(newInputValue)
-              if (reason === 'input') setSelectedFood(null)
-            }}
-            onChange={(_event, newValue) => {
-              setSelectedFood(newValue && typeof newValue !== 'string' ? newValue : null)
-            }}
+            {...foodPicker.autocompleteProps}
             renderInput={(params) => (
               <TextField
                 {...params}
@@ -238,22 +322,20 @@ export function LogPage() {
               />
             )}
           />
-          {!selectedFood && foodInputValue.trim() !== '' && (
-            <FormControl required fullWidth>
-              <InputLabel id="new-food-category-label">New food's category</InputLabel>
-              <Select
-                labelId="new-food-category-label"
-                label="New food's category"
-                value={newFoodCategoryId}
-                onChange={(event) => setNewFoodCategoryId(event.target.value)}
-              >
-                {categories.map((category) => (
-                  <MenuItem key={category.id} value={category.id}>
-                    {category.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+          {!foodPicker.value && foodPicker.inputValue.trim() !== '' && (
+            <Autocomplete
+              freeSolo
+              options={categories}
+              {...categoryPicker.autocompleteProps}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="New food's category"
+                  required
+                  helperText="Pick an existing category, or type a new one to add it for the household."
+                />
+              )}
+            />
           )}
           <FormControl required fullWidth>
             <InputLabel id="entry-child-label">Child</InputLabel>
@@ -301,6 +383,28 @@ export function LogPage() {
                 />
               ))}
             </FormGroup>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1 }}>
+              <TextField
+                size="small"
+                label="Add a reason tag"
+                value={newReasonTagInput}
+                onChange={(event) => setNewReasonTagInput(event.target.value)}
+                helperText="Adds a new reason tag for the whole household."
+              />
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={newReasonTagInput.trim() === '' || addingReasonTag}
+                onClick={handleAddReasonTag}
+              >
+                {addingReasonTag ? 'Adding…' : 'Add'}
+              </Button>
+            </Stack>
+            {reasonTagError && (
+              <Alert severity="error" sx={{ mt: 1 }}>
+                {reasonTagError}
+              </Alert>
+            )}
           </FormControl>
 
           <TextField
@@ -318,9 +422,10 @@ export function LogPage() {
             variant="contained"
             disabled={
               addingEntry ||
+              entryChildId === '' ||
               entryReasonTagIds.length === 0 ||
-              foodInputValue.trim() === '' ||
-              (!selectedFood && newFoodCategoryId === '')
+              foodPicker.inputValue.trim() === '' ||
+              (!foodPicker.value && !categoryPicker.value && categoryPicker.inputValue.trim() === '')
             }
           >
             {addingEntry ? 'Logging…' : 'Log entry'}
