@@ -1,4 +1,5 @@
 import ChildCareIcon from '@mui/icons-material/ChildCare'
+import ListAltIcon from '@mui/icons-material/ListAlt'
 import PersonAddIcon from '@mui/icons-material/PersonAdd'
 import RestaurantIcon from '@mui/icons-material/Restaurant'
 import { List, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material'
@@ -22,6 +23,12 @@ export function HomePage() {
             <RestaurantIcon />
           </ListItemIcon>
           <ListItemText primary="Food log" />
+        </ListItemButton>
+        <ListItemButton component={Link} to="/browse">
+          <ListItemIcon>
+            <ListAltIcon />
+          </ListItemIcon>
+          <ListItemText primary="Browse foods" />
         </ListItemButton>
         <ListItemButton component={Link} to="/children">
           <ListItemIcon>

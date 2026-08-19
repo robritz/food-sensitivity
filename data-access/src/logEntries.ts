@@ -93,15 +93,21 @@ export async function addLogEntry(client: DataAccessClient, input: AddLogEntryIn
   );
 }
 
-/** Lists every log entry in the caller's household, most recent first --
- * a basic chronological view confirming entries persist across creation.
- * Relies on RLS (rather than an explicit household_id filter) to scope the
- * result, the same pattern `listChildren` uses. */
-export async function listLogEntries(client: DataAccessClient): Promise<LogEntry[]> {
-  const { data, error } = await client
-    .from("log_entry")
-    .select("*, log_entry_reason_tag(reason_tag_id)")
-    .order("created_at", { ascending: false });
+export interface ListLogEntriesFilter {
+  foodId?: string;
+  childId?: string;
+}
+
+/** Lists log entries in the caller's household, most recent first -- a basic
+ * chronological view confirming entries persist across creation. Optionally
+ * narrowed to a single Food/Child pair, for the browse list's tap-through
+ * history (ticket 12). Relies on RLS (rather than an explicit household_id
+ * filter) to scope the result, the same pattern `listChildren` uses. */
+export async function listLogEntries(client: DataAccessClient, filter?: ListLogEntriesFilter): Promise<LogEntry[]> {
+  let query = client.from("log_entry").select("*, log_entry_reason_tag(reason_tag_id)");
+  if (filter?.foodId) query = query.eq("food_id", filter.foodId);
+  if (filter?.childId) query = query.eq("child_id", filter.childId);
+  const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
 
   return data.map((row) =>
@@ -110,4 +116,43 @@ export async function listLogEntries(client: DataAccessClient): Promise<LogEntry
       row.log_entry_reason_tag.map((tag) => tag.reason_tag_id),
     ),
   );
+}
+
+export interface FoodStatusSummary {
+  foodId: string;
+  childId: string;
+  /** id of the most recent entry for this Food/Child pair -- lets a caller
+   * key off it (e.g. React list keys) without re-deriving one. */
+  latestEntryId: string;
+  status: LogEntryStatus;
+  createdAt: string;
+}
+
+/** Lists the most recent status for every (Food, Child) pair the caller's
+ * household has logged an entry for -- the "one row per Food per child"
+ * view the browse list (ticket 12) renders. Groups client-side rather than
+ * via a DB view: entries are already ordered most-recent-first by RLS-scoped
+ * query, so the first row seen per (food_id, child_id) pair is its latest;
+ * cheap and avoids a migration for what's a straightforward reduction over
+ * data the household's RLS policy already scopes for us. */
+export async function listFoodStatusSummary(client: DataAccessClient): Promise<FoodStatusSummary[]> {
+  const { data, error } = await client
+    .from("log_entry")
+    .select("id, food_id, child_id, status, created_at")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  const latestByPair = new Map<string, FoodStatusSummary>();
+  for (const row of data) {
+    const key = `${row.food_id}:${row.child_id}`;
+    if (latestByPair.has(key)) continue; // already saw a more recent row for this pair
+    latestByPair.set(key, {
+      foodId: row.food_id,
+      childId: row.child_id,
+      latestEntryId: row.id,
+      status: row.status as LogEntryStatus,
+      createdAt: row.created_at,
+    });
+  }
+  return Array.from(latestByPair.values());
 }
