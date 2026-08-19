@@ -34,6 +34,7 @@ export {
 } from "./logEntries.js";
 export type {
   AddLogEntryInput,
+  AddLogEntryPhotoOptions,
   FoodStatusSummary,
   ListLogEntriesFilter,
   LogEntry,
@@ -44,3 +45,12 @@ export type {
 export { findOrCreateLocation, reverseGeocode } from "./locations.js";
 export type { FindOrCreateLocationInput, Location } from "./locations.js";
 export type { ReverseGeocodeMatch } from "./mapboxClient.js";
+export { syncQueuedEntries } from "./offlineQueue.js";
+export type {
+  QueuedLocationCapture,
+  QueuedLogEntry,
+  QueuedPhoto,
+  SyncFailure,
+  SyncOutcome,
+  SyncSuccess,
+} from "./offlineQueue.js";

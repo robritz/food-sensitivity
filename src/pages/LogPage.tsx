@@ -20,6 +20,8 @@ import {
   type Food,
   type LogEntry,
   type LogEntryStatus,
+  type QueuedLocationCapture,
+  type QueuedLogEntry,
   type ReasonTag,
 } from '@food-tracker/data-access'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -58,6 +60,8 @@ import {
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { runOfflineSync } from '../lib/offlineSync'
+import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 
@@ -126,6 +130,12 @@ export function LogPage() {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Entries created while offline (ticket 11): queued in IndexedDB via
+  // `addQueuedEntry`, shown separately below so it's visibly "queued, not
+  // yet on the server" rather than mixed into `entries` (which only ever
+  // holds what's actually been read back from Supabase).
+  const [queuedEntries, setQueuedEntries] = useState<QueuedLogEntry[]>([])
 
   const categoryPicker = useFreeSoloPicker<Category>()
   const { setValue: setDefaultCategory, setInputValue: setDefaultCategoryInputValue } = categoryPicker
@@ -202,6 +212,56 @@ export function LogPage() {
       cancelled = true
     }
   }, [setDefaultCategory, setDefaultCategoryInputValue])
+
+  // Loads whatever's already queued from a prior offline session (e.g. the
+  // caregiver logged an entry offline, closed the tab, and reopened it
+  // before reconnecting) so it's visible immediately, independent of the
+  // sync attempt below.
+  useEffect(() => {
+    let cancelled = false
+    listQueuedEntries()
+      .then((stored) => {
+        if (!cancelled) setQueuedEntries(stored)
+      })
+      .catch(() => {
+        // Best-effort -- an unreadable queue shouldn't block the rest of the page.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Drains the offline queue (ticket 11) once on mount (covers "was offline,
+  // reopened the app after reconnecting") and again on every browser
+  // `online` event (covers "was open the whole time, connectivity just came
+  // back"). `runOfflineSync` is safe to call with an empty or already-synced
+  // queue, and safe to overlap with itself -- each queued entry's sync is
+  // idempotent (see `syncQueuedEntries`), so a redundant run just re-confirms
+  // "already synced" for anything a previous run already dequeued.
+  useEffect(() => {
+    let cancelled = false
+    async function trySync() {
+      if (!navigator.onLine) return
+      const result = await runOfflineSync(dataAccessClient)
+      if (cancelled || result.syncedClientIds.length === 0) return
+      setQueuedEntries((current) => current.filter((entry) => !result.syncedClientIds.includes(entry.clientId)))
+      // Newly-synced entries now exist server-side -- refresh so they show
+      // up in "Recent entries" instead of only having ever appeared queued.
+      listLogEntries(dataAccessClient)
+        .then((refreshed) => {
+          if (!cancelled) setEntries(refreshed)
+        })
+        .catch(() => {
+          // Best-effort refresh -- the sync itself already succeeded.
+        })
+    }
+    trySync()
+    window.addEventListener('online', trySync)
+    return () => {
+      cancelled = true
+      window.removeEventListener('online', trySync)
+    }
+  }, [])
 
   // Captures the device's current GPS coordinates once per page visit (with
   // permission) and reverse-geocodes them into a suggested place name via
@@ -385,11 +445,75 @@ export function LogPage() {
     return location.id
   }
 
+  // The offline counterpart of `resolveLocationId`: same "no coords or no
+  // name means logging without a place" rule, but never calls
+  // `findOrCreateLocation` (a Supabase round-trip) -- that's deferred to
+  // sync time, once `syncQueuedEntries` actually has a connection to use.
+  function buildLocationCapture(): QueuedLocationCapture | undefined {
+    if (!locationCoords) return undefined
+    const name = locationName.trim()
+    if (name === '') return undefined
+    return {
+      name,
+      latitude: locationCoords.latitude,
+      longitude: locationCoords.longitude,
+      mapboxPlaceId: locationMapboxPlaceId,
+    }
+  }
+
+  function resetEntryForm() {
+    foodPicker.setValue(null)
+    foodPicker.setInputValue('')
+    setFoodOptions([])
+    setEntryReasonTagIds([])
+    setEntryNotes('')
+    setEntryIntensity(null)
+    setEntryOccurredAt(toDatetimeLocalValue(new Date()))
+    setEntryPhotos([])
+    setEntryPhotoError(null)
+  }
+
+  // Queues an entry locally instead of writing it to Supabase -- the offline
+  // path (ticket 11). Only logs against an *existing* Food: creating a new
+  // Food/Category (`resolveFoodId`/`resolveCategoryId`) needs its own
+  // network round-trip that can't happen offline, so `handleAddEntry` below
+  // only calls this once it's confirmed `foodPicker.value` is set. Photos
+  // are captured as-is (their bytes, not yet uploaded) and location as raw
+  // coordinates/name (not yet resolved to a Location row) -- both finish the
+  // rest of the trip through `syncQueuedEntries` once back online.
+  async function queueEntryOffline(foodId: string) {
+    const queuedEntry: QueuedLogEntry = {
+      clientId: crypto.randomUUID(),
+      input: {
+        foodId,
+        childId: entryChildId,
+        status: entryStatus,
+        reasonTagIds: entryReasonTagIds,
+        notes: entryNotes.trim() === '' ? undefined : entryNotes,
+        intensity: entryIntensity ?? undefined,
+        occurredAt: new Date(entryOccurredAt).toISOString(),
+      },
+      location: buildLocationCapture(),
+      photos: entryPhotos.map((file) => ({ id: crypto.randomUUID(), name: file.name, blob: file })),
+    }
+    await addQueuedEntry(queuedEntry)
+    setQueuedEntries((current) => [queuedEntry, ...current])
+  }
+
   async function handleAddEntry(event: FormEvent) {
     event.preventDefault()
     setEntryError(null)
     setAddingEntry(true)
     try {
+      if (!navigator.onLine) {
+        if (!foodPicker.value) {
+          throw new Error('Choose an existing food to log while offline -- adding a new one needs a connection.')
+        }
+        await queueEntryOffline(foodPicker.value.id)
+        resetEntryForm()
+        return
+      }
+
       const foodId = await resolveFoodId()
       const locationId = await resolveLocationId()
       const entry = await addLogEntry(dataAccessClient, {
@@ -417,15 +541,7 @@ export function LogPage() {
         }
       }
 
-      foodPicker.setValue(null)
-      foodPicker.setInputValue('')
-      setFoodOptions([])
-      setEntryReasonTagIds([])
-      setEntryNotes('')
-      setEntryIntensity(null)
-      setEntryOccurredAt(toDatetimeLocalValue(new Date()))
-      setEntryPhotos([])
-      setEntryPhotoError(null)
+      resetEntryForm()
     } catch (err) {
       setEntryError(err instanceof Error ? err.message : 'Could not add log entry.')
     } finally {
@@ -730,6 +846,40 @@ export function LogPage() {
             {addingEntry ? 'Logging…' : 'Log entry'}
           </Button>
         </Stack>
+      )}
+
+      {queuedEntries.length > 0 && (
+        <>
+          <Typography variant="h6" component="h2" gutterBottom>
+            Queued (offline)
+          </Typography>
+          <List sx={{ bgcolor: 'background.paper', borderRadius: 1, mb: 3 }}>
+            {queuedEntries.map((queuedEntry) => (
+              <ListItem key={queuedEntry.clientId} alignItems="flex-start">
+                <ListItemText
+                  primary={
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Typography component="span" sx={{ fontWeight: 500 }}>
+                        {nameById(children, queuedEntry.input.childId)} —{' '}
+                        {nameById(foods, queuedEntry.input.foodId)}
+                      </Typography>
+                      <Chip size="small" color="warning" label="Queued — will sync when back online" />
+                    </Stack>
+                  }
+                  secondary={
+                    <>
+                      {new Date(queuedEntry.input.occurredAt ?? new Date().toISOString()).toLocaleString()} —{' '}
+                      {reasonTagNames(queuedEntry.input.reasonTagIds)}
+                      {queuedEntry.photos.length > 0
+                        ? ` — ${queuedEntry.photos.length} photo(s) pending upload`
+                        : ''}
+                    </>
+                  }
+                />
+              </ListItem>
+            ))}
+          </List>
+        </>
       )}
 
       <Divider sx={{ mb: 3 }} />

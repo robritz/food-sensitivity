@@ -26,6 +26,14 @@ export interface LogEntry {
 }
 
 export interface AddLogEntryInput {
+  /** Caller-supplied id, used as the row's primary key instead of the
+   * column's `gen_random_uuid()` default. Optional -- omit for the normal
+   * online path. The offline sync queue (ticket 11) passes the id it
+   * generated at enqueue time here, which is what lets `addLogEntry` be
+   * called again for the same logical entry (a sync retry after a dropped
+   * connection) without creating a duplicate row: see the id-conflict
+   * handling below. */
+  id?: string;
   foodId: string;
   childId: string;
   status: LogEntryStatus;
@@ -118,10 +126,14 @@ export async function addLogEntry(client: DataAccessClient, input: AddLogEntryIn
   // pair -- not wrapped in a transaction (the anon/authenticated client can't
   // start one). If the second insert fails after the first succeeds, an
   // orphaned reason-tag-less entry could persist; accepted for now as the
-  // same tradeoff already made there, revisit if it proves to matter.
-  const { data: entryRow, error: entryError } = await client
+  // same tradeoff already made there, revisit if it proves to matter. When
+  // `input.id` is given, both steps below are written to tolerate exactly
+  // that partial-failure retry, since that's the offline sync queue's whole
+  // reason for supplying one (see `AddLogEntryInput.id`).
+  const { data: freshEntryRow, error: entryError } = await client
     .from("log_entry")
     .insert({
+      ...(input.id ? { id: input.id } : {}),
       household_id: identity.householdId,
       food_id: input.foodId,
       child_id: input.childId,
@@ -134,19 +146,55 @@ export async function addLogEntry(client: DataAccessClient, input: AddLogEntryIn
     })
     .select()
     .single();
-  if (entryError) throw entryError;
 
-  const { data: tagRows, error: tagError } = await client
-    .from("log_entry_reason_tag")
-    .insert(
-      input.reasonTagIds.map((reasonTagId) => ({
-        household_id: identity.householdId,
-        log_entry_id: entryRow.id,
-        reason_tag_id: reasonTagId,
-      })),
-    )
-    .select("reason_tag_id");
+  let entryRow: Tables<"log_entry">;
+  if (entryError) {
+    // 23505 = unique_violation on the primary key -- only possible here when
+    // `input.id` was supplied and a prior attempt already inserted this same
+    // row (a sync retry, e.g. the response to the first attempt never made
+    // it back to the caller). Treat that as success and fetch what's there,
+    // rather than surfacing a spurious duplicate-key error -- the same
+    // "fall back to the row a race/retry already created" pattern
+    // `findOrCreateLocation` uses for its own unique constraint.
+    if (entryError.code === "23505" && input.id) {
+      const { data: existing, error: findError } = await client
+        .from("log_entry")
+        .select()
+        .eq("id", input.id)
+        .single();
+      if (findError) throw findError;
+      entryRow = existing;
+    } else {
+      throw entryError;
+    }
+  } else {
+    entryRow = freshEntryRow;
+  }
+
+  // `upsert(..., { ignoreDuplicates: true })` rather than a plain `insert`:
+  // a plain multi-row insert aborts entirely if *any* row already exists,
+  // which would wrongly fail a retry that's also carrying reason tags a
+  // partial first attempt never got to insert. Ignoring conflicts instead
+  // means already-attached tags are left alone and only the missing ones are
+  // added, whichever branch above produced `entryRow`.
+  const { error: tagError } = await client.from("log_entry_reason_tag").upsert(
+    input.reasonTagIds.map((reasonTagId) => ({
+      household_id: identity.householdId,
+      log_entry_id: entryRow.id,
+      reason_tag_id: reasonTagId,
+    })),
+    { onConflict: "log_entry_id,reason_tag_id", ignoreDuplicates: true },
+  );
   if (tagError) throw tagError;
+
+  // Read back the full current tag set rather than trusting the upsert's own
+  // (possibly ignore-duplicates-truncated) response, same reason
+  // `updateLogEntry` re-selects after its delete+insert.
+  const { data: tagRows, error: tagFindError } = await client
+    .from("log_entry_reason_tag")
+    .select("reason_tag_id")
+    .eq("log_entry_id", entryRow.id);
+  if (tagFindError) throw tagFindError;
 
   return toLogEntry(
     entryRow,
@@ -243,26 +291,45 @@ export interface LogEntryPhoto {
  * path segment since storage objects have no columns to filter on. That RLS
  * is also what the ticket's required integration test exercises.
  */
+export interface AddLogEntryPhotoOptions {
+  /** Caller-supplied id used in the storage path instead of a fresh
+   * `crypto.randomUUID()`. Optional -- omit for the normal online path. The
+   * offline sync queue (ticket 11) generates one per queued photo at enqueue
+   * time and passes it here on every sync attempt, so a retried upload (the
+   * first attempt's request succeeded but its response never made it back)
+   * overwrites the same storage object instead of attaching a duplicate. */
+  photoId?: string;
+}
+
 export async function addLogEntryPhoto(
   client: DataAccessClient,
   logEntryId: string,
   file: File,
+  options?: AddLogEntryPhotoOptions,
 ): Promise<LogEntryPhoto> {
   const identity = await getCurrentCaregiver(client);
   if (!identity) {
     throw new Error("No signed-in caregiver -- cannot attach a photo without a household.");
   }
 
+  const path = `${identity.householdId}/${logEntryId}/${options?.photoId ?? crypto.randomUUID()}-${file.name}`;
+
   // Checked here (not just left to a future "4 photos" glance in the UI) so
-  // the limit holds even if two uploads race or a caller skips the UI.
+  // the limit holds even if two uploads race or a caller skips the UI. A
+  // retry of a photo that's already attached (same `path`, from the same
+  // `photoId`) doesn't count against the cap -- it's not a new photo, just
+  // this same upload being reattempted.
   const existing = await listLogEntryPhotos(client, logEntryId);
-  if (existing.length >= MAX_PHOTOS_PER_LOG_ENTRY) {
+  const alreadyUploaded = existing.some((photo) => photo.path === path);
+  if (!alreadyUploaded && existing.length >= MAX_PHOTOS_PER_LOG_ENTRY) {
     throw new Error(`An entry can have at most ${MAX_PHOTOS_PER_LOG_ENTRY} photos.`);
   }
 
-  const path = `${identity.householdId}/${logEntryId}/${crypto.randomUUID()}-${file.name}`;
+  // `upsert: true` so a retried upload (same path) overwrites the object
+  // already sitting there from a prior attempt instead of erroring.
   const { error } = await client.storage.from(ENTRY_PHOTOS_BUCKET).upload(path, file, {
     contentType: file.type || undefined,
+    upsert: true,
   });
   if (error) throw error;
 
