@@ -9,9 +9,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
 
-    getCurrentCaregiver(dataAccessClient).then((identity) => {
-      if (!cancelled) setState({ identity, loading: false })
-    })
+    getCurrentCaregiver(dataAccessClient)
+      .then((identity) => {
+        if (!cancelled) setState({ identity, loading: false })
+      })
+      .catch(() => {
+        // Network/auth-server failure (e.g. an unreachable Supabase
+        // project, or a refresh_token call that timed out) -- treated the
+        // same as "not signed in" rather than leaving `loading: true`
+        // forever, which otherwise hangs the app on an infinite spinner.
+        if (!cancelled) setState({ identity: null, loading: false })
+      })
 
     return () => {
       cancelled = true
