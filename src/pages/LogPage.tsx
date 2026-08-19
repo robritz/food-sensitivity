@@ -62,6 +62,7 @@ import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
+import { filterFoodsOffline } from '../lib/offlineFoodSearch'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 
@@ -313,11 +314,22 @@ export function LogPage() {
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
   // been selected and the input still reflects its name.
+  //
+  // Offline (ticket 11 only allows logging against an existing food), there's
+  // no network round-trip to make -- `searchFoods` would just fail silently
+  // and leave the picker with no options. `foods` was already loaded on
+  // mount, so filter that in memory instead, mirroring `searchFoods`' own
+  // case-insensitive substring match.
   useEffect(() => {
     const query = foodPicker.inputValue.trim()
     if (foodPicker.value && foodPicker.value.name === foodPicker.inputValue) return
     if (query === '') {
       setFoodOptions([])
+      return
+    }
+    if (!navigator.onLine) {
+      setFoodOptions(filterFoodsOffline(foods, query))
+      setFoodSearchLoading(false)
       return
     }
     let cancelled = false
@@ -338,7 +350,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [foodPicker.inputValue, foodPicker.value])
+  }, [foodPicker.inputValue, foodPicker.value, foods])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
