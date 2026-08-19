@@ -2,12 +2,14 @@ import {
   addCategory,
   addFood,
   addLogEntry,
+  addLogEntryPhoto,
   addReasonTag,
   listCategories,
   listChildren,
   listFoods,
   listLogEntries,
   listReasonTags,
+  MAX_PHOTOS_PER_LOG_ENTRY,
   searchFoods,
   type Category,
   type Child,
@@ -36,18 +38,27 @@ import {
   MenuItem,
   Radio,
   RadioGroup,
+  Rating,
   Select,
   Stack,
   TextField,
   Typography,
 } from '@mui/material'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
+
+/** "Date happened" as a `datetime-local`-input-compatible string, in the
+ * caregiver's local time zone (unlike `toISOString`, which is always UTC and
+ * would show the wrong wall-clock time in the field). */
+function toDatetimeLocalValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 function statusLabel(status: LogEntryStatus): string {
   return status[0].toUpperCase() + status.slice(1)
@@ -115,6 +126,10 @@ export function LogPage() {
   const [entryStatus, setEntryStatus] = useState<LogEntryStatus>('liked')
   const [entryReasonTagIds, setEntryReasonTagIds] = useState<string[]>([])
   const [entryNotes, setEntryNotes] = useState('')
+  const [entryIntensity, setEntryIntensity] = useState<number | null>(null)
+  const [entryOccurredAt, setEntryOccurredAt] = useState(() => toDatetimeLocalValue(new Date()))
+  const [entryPhotos, setEntryPhotos] = useState<File[]>([])
+  const [entryPhotoError, setEntryPhotoError] = useState<string | null>(null)
   const [entryError, setEntryError] = useState<string | null>(null)
   const [addingEntry, setAddingEntry] = useState(false)
 
@@ -247,6 +262,28 @@ export function LogPage() {
     }
   }
 
+  // Adds up to MAX_PHOTOS_PER_LOG_ENTRY photos total (across however many
+  // times the caregiver picks a file), trimming and warning rather than
+  // rejecting outright if a single selection would exceed the cap.
+  function handlePhotoInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files
+    event.target.value = '' // lets picking the same file again re-trigger onChange
+    if (!files || files.length === 0) return
+    const incoming = Array.from(files)
+    setEntryPhotos((current) => {
+      const room = MAX_PHOTOS_PER_LOG_ENTRY - current.length
+      setEntryPhotoError(
+        incoming.length > room ? `An entry can have at most ${MAX_PHOTOS_PER_LOG_ENTRY} photos.` : null,
+      )
+      return [...current, ...incoming.slice(0, room)]
+    })
+  }
+
+  function removePhoto(index: number) {
+    setEntryPhotos((current) => current.filter((_, i) => i !== index))
+    setEntryPhotoError(null)
+  }
+
   async function handleAddEntry(event: FormEvent) {
     event.preventDefault()
     setEntryError(null)
@@ -259,13 +296,33 @@ export function LogPage() {
         status: entryStatus,
         reasonTagIds: entryReasonTagIds,
         notes: entryNotes.trim() === '' ? undefined : entryNotes,
+        intensity: entryIntensity ?? undefined,
+        occurredAt: new Date(entryOccurredAt).toISOString(),
       })
       setEntries((current) => [entry, ...current])
+
+      // Uploaded as a follow-up step once the entry exists (photos attach
+      // to a log_entry_id) -- the entry itself is kept even if a photo
+      // upload fails, rather than rolling the whole submission back.
+      if (entryPhotos.length > 0) {
+        const uploads = await Promise.allSettled(
+          entryPhotos.map((file) => addLogEntryPhoto(dataAccessClient, entry.id, file)),
+        )
+        const failedCount = uploads.filter((result) => result.status === 'rejected').length
+        if (failedCount > 0) {
+          setEntryError(`Entry logged, but ${failedCount} photo(s) failed to upload.`)
+        }
+      }
+
       foodPicker.setValue(null)
       foodPicker.setInputValue('')
       setFoodOptions([])
       setEntryReasonTagIds([])
       setEntryNotes('')
+      setEntryIntensity(null)
+      setEntryOccurredAt(toDatetimeLocalValue(new Date()))
+      setEntryPhotos([])
+      setEntryPhotoError(null)
     } catch (err) {
       setEntryError(err instanceof Error ? err.message : 'Could not add log entry.')
     } finally {
@@ -357,6 +414,16 @@ export function LogPage() {
             </Select>
           </FormControl>
 
+          <TextField
+            label="Date happened"
+            type="datetime-local"
+            value={entryOccurredAt}
+            onChange={(event) => setEntryOccurredAt(event.target.value)}
+            slotProps={{ inputLabel: { shrink: true } }}
+            helperText="Defaults to now -- change it to log something that happened earlier."
+            fullWidth
+          />
+
           <FormControl component="fieldset">
             <FormLabel component="legend">Status</FormLabel>
             <RadioGroup
@@ -368,6 +435,15 @@ export function LogPage() {
                 <FormControlLabel key={status} value={status} control={<Radio />} label={statusLabel(status)} />
               ))}
             </RadioGroup>
+          </FormControl>
+
+          <FormControl component="fieldset">
+            <FormLabel component="legend">Intensity (optional)</FormLabel>
+            <Rating
+              value={entryIntensity}
+              onChange={(_event, newValue) => setEntryIntensity(newValue)}
+              max={5}
+            />
           </FormControl>
 
           <FormControl component="fieldset">
@@ -414,7 +490,33 @@ export function LogPage() {
             multiline
             minRows={2}
             fullWidth
+            // Inconsistent reactions are the case most worth a note (what
+            // was inconsistent about it?), but it's still optional -- the
+            // field itself is unchanged, just nudged via helper text.
+            helperText={
+              entryStatus === 'inconsistent' ? "What made this inconsistent? (optional)" : undefined
+            }
           />
+
+          <Box>
+            <FormLabel component="legend">Photos (up to {MAX_PHOTOS_PER_LOG_ENTRY})</FormLabel>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center', mt: 1 }}>
+              {entryPhotos.map((file, index) => (
+                <Chip key={`${file.name}-${index}`} label={file.name} onDelete={() => removePhoto(index)} />
+              ))}
+              {entryPhotos.length < MAX_PHOTOS_PER_LOG_ENTRY && (
+                <Button component="label" size="small" variant="outlined">
+                  Add photo
+                  <input type="file" accept="image/*" hidden multiple onChange={handlePhotoInputChange} />
+                </Button>
+              )}
+            </Stack>
+            {entryPhotoError && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                {entryPhotoError}
+              </Alert>
+            )}
+          </Box>
 
           {entryError && <Alert severity="error">{entryError}</Alert>}
           <Button
@@ -453,11 +555,12 @@ export function LogPage() {
                     {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)}
                   </Typography>
                   <Chip size="small" label={statusLabel(entry.status)} />
+                  {entry.intensity !== null && <Rating size="small" value={entry.intensity} max={5} readOnly />}
                 </Stack>
               }
               secondary={
                 <>
-                  {reasonTagNames(entry.reasonTagIds)}
+                  {new Date(entry.occurredAt).toLocaleString()} — {reasonTagNames(entry.reasonTagIds)}
                   {entry.notes ? ` — "${entry.notes}"` : ''}
                 </>
               }

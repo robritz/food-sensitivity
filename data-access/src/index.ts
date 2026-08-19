@@ -21,11 +21,20 @@ export { addCategory, addReasonTag, listCategories, listReasonTags } from "./cat
 export type { Category, ReasonTag } from "./catalog.js";
 export { addFood, listFoods, searchFoods } from "./foods.js";
 export type { AddFoodInput, Food } from "./foods.js";
-export { addLogEntry, listFoodStatusSummary, listLogEntries } from "./logEntries.js";
+export {
+  addLogEntry,
+  addLogEntryPhoto,
+  getLogEntryPhotoUrl,
+  listFoodStatusSummary,
+  listLogEntries,
+  listLogEntryPhotos,
+  MAX_PHOTOS_PER_LOG_ENTRY,
+} from "./logEntries.js";
 export type {
   AddLogEntryInput,
   FoodStatusSummary,
   ListLogEntriesFilter,
   LogEntry,
+  LogEntryPhoto,
   LogEntryStatus,
 } from "./logEntries.js";
