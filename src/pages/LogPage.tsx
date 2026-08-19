@@ -62,7 +62,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { runOfflineSync } from '../lib/offlineSync'
@@ -204,6 +204,10 @@ export function LogPage() {
   const [viewingPhotosLoading, setViewingPhotosLoading] = useState(false)
   const [viewingPhotosError, setViewingPhotosError] = useState<string | null>(null)
   const [lightboxPath, setLightboxPath] = useState<string | null>(null)
+  // Bumped on every openDetailDialog call; an in-flight fetch only applies
+  // its result if its id is still current, so a superseded open (clicking a
+  // different entry before the first one's photos load) is discarded.
+  const viewingRequestIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -677,8 +681,13 @@ export function LogPage() {
   // Opens the single-entry detail view and fetches its photos fresh (rather
   // than in the load-time useEffect) so the signed URLs are as new as
   // possible when they're actually rendered -- see the note on
-  // `viewingPhotoUrls` above.
+  // `viewingPhotoUrls` above. Guards against a rapid A-then-B click on two
+  // different entries the same way the load-time/geolocation/food-search
+  // effects guard with a `cancelled` flag: without it, entry A's slower
+  // fetch could resolve after B's dialog is already open and clobber B's
+  // photos with A's.
   function openDetailDialog(entry: LogEntry) {
+    const requestId = ++viewingRequestIdRef.current
     setViewingEntry(entry)
     setViewingPhotos([])
     setViewingPhotoUrls({})
@@ -689,13 +698,16 @@ export function LogPage() {
       .then(async (photos) => {
         const sorted = sortLogEntryPhotos(photos)
         const urls = await Promise.all(sorted.map((photo) => getLogEntryPhotoUrl(dataAccessClient, photo.path)))
+        if (viewingRequestIdRef.current !== requestId) return
         setViewingPhotos(sorted)
         setViewingPhotoUrls(Object.fromEntries(sorted.map((photo, index) => [photo.path, urls[index]])))
       })
       .catch((err) => {
+        if (viewingRequestIdRef.current !== requestId) return
         setViewingPhotosError(err instanceof Error ? err.message : 'Could not load photos.')
       })
       .finally(() => {
+        if (viewingRequestIdRef.current !== requestId) return
         setViewingPhotosLoading(false)
       })
   }
