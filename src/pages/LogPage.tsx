@@ -132,6 +132,12 @@ export function LogPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  // Tracked via events (not read ad hoc via `navigator.onLine`) so effects
+  // that behave differently online vs. offline -- like the food search below
+  // -- can list it as a dependency and re-run the moment connectivity
+  // changes, instead of only reacting to it lazily on the next keystroke.
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
+
   // Entries created while offline (ticket 11): queued in IndexedDB via
   // `addQueuedEntry`, shown separately below so it's visibly "queued, not
   // yet on the server" rather than mixed into `entries` (which only ever
@@ -264,6 +270,21 @@ export function LogPage() {
     }
   }, [])
 
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true)
+    }
+    function handleOffline() {
+      setIsOnline(false)
+    }
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
   // Captures the device's current GPS coordinates once per page visit (with
   // permission) and reverse-geocodes them into a suggested place name via
   // Mapbox (ticket 10). Both steps degrade gracefully: no geolocation
@@ -327,7 +348,7 @@ export function LogPage() {
       setFoodOptions([])
       return
     }
-    if (!navigator.onLine) {
+    if (!isOnline) {
       setFoodOptions(filterFoodsOffline(foods, query))
       setFoodSearchLoading(false)
       return
@@ -350,7 +371,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [foodPicker.inputValue, foodPicker.value, foods])
+  }, [foodPicker.inputValue, foodPicker.value, foods, isOnline])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
