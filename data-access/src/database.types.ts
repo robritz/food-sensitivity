@@ -231,7 +231,9 @@ export type Database = {
           food_id: string
           household_id: string
           id: string
+          intensity: number | null
           notes: string | null
+          occurred_at: string
           status: string
         }
         Insert: {
@@ -241,7 +243,9 @@ export type Database = {
           food_id: string
           household_id: string
           id?: string
+          intensity?: number | null
           notes?: string | null
+          occurred_at?: string
           status: string
         }
         Update: {
@@ -251,7 +255,9 @@ export type Database = {
           food_id?: string
           household_id?: string
           id?: string
+          intensity?: number | null
           notes?: string | null
+          occurred_at?: string
           status?: string
         }
         Relationships: [
