@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AuthProvider } from './lib/AuthProvider'
 import { RequireAuth } from './lib/RequireAuth'
 import { AcceptInvitePage } from './pages/AcceptInvitePage'
+import { BrowsePage } from './pages/BrowsePage'
 import { ChildrenPage } from './pages/ChildrenPage'
 import { HomePage } from './pages/HomePage'
 import { InviteCaregiverPage } from './pages/InviteCaregiverPage'
@@ -42,6 +43,14 @@ function App() {
           element={
             <RequireAuth>
               <LogPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/browse"
+          element={
+            <RequireAuth>
+              <BrowsePage />
             </RequireAuth>
           }
         />
