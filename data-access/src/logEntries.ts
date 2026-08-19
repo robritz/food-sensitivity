@@ -12,6 +12,9 @@ export interface LogEntry {
   status: LogEntryStatus;
   reasonTagIds: string[];
   notes: string | null;
+  /** Null for entries logged without a captured/confirmed location (e.g.
+   * geolocation permission denied, or from before ticket 10). */
+  locationId: string | null;
   createdBy: string;
   createdAt: string;
 }
@@ -23,6 +26,9 @@ export interface AddLogEntryInput {
   /** At least one is required -- an entry must say *why*, not just what. */
   reasonTagIds: string[];
   notes?: string;
+  /** Id of a Location resolved via `findOrCreateLocation` (ticket 10).
+   * Omitted when geolocation wasn't available/granted or capture failed. */
+  locationId?: string;
 }
 
 // Takes reasonTagIds separately (unlike sibling toX(row) mappers) because
@@ -36,6 +42,7 @@ function toLogEntry(row: Tables<"log_entry">, reasonTagIds: string[]): LogEntry 
     status: row.status as LogEntryStatus,
     reasonTagIds,
     notes: row.notes,
+    locationId: row.location_id,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -69,6 +76,7 @@ export async function addLogEntry(client: DataAccessClient, input: AddLogEntryIn
       child_id: input.childId,
       status: input.status,
       notes: input.notes ?? null,
+      location_id: input.locationId ?? null,
       created_by: identity.caregiverId,
     })
     .select()

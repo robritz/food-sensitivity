@@ -223,6 +223,44 @@ export type Database = {
           },
         ]
       }
+      location: {
+        Row: {
+          created_at: string
+          household_id: string
+          id: string
+          latitude: number
+          longitude: number
+          mapbox_place_id: string | null
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          household_id: string
+          id?: string
+          latitude: number
+          longitude: number
+          mapbox_place_id?: string | null
+          name: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string
+          id?: string
+          latitude?: number
+          longitude?: number
+          mapbox_place_id?: string | null
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       log_entry: {
         Row: {
           child_id: string
@@ -231,6 +269,7 @@ export type Database = {
           food_id: string
           household_id: string
           id: string
+          location_id: string | null
           notes: string | null
           status: string
         }
@@ -241,6 +280,7 @@ export type Database = {
           food_id: string
           household_id: string
           id?: string
+          location_id?: string | null
           notes?: string | null
           status: string
         }
@@ -251,6 +291,7 @@ export type Database = {
           food_id?: string
           household_id?: string
           id?: string
+          location_id?: string | null
           notes?: string | null
           status?: string
         }
@@ -281,6 +322,13 @@ export type Database = {
             columns: ["household_id"]
             isOneToOne: false
             referencedRelation: "household"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "log_entry_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "location"
             referencedColumns: ["id"]
           },
         ]

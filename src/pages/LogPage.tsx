@@ -3,11 +3,13 @@ import {
   addFood,
   addLogEntry,
   addReasonTag,
+  findOrCreateLocation,
   listCategories,
   listChildren,
   listFoods,
   listLogEntries,
   listReasonTags,
+  reverseGeocode,
   searchFoods,
   type Category,
   type Child,
@@ -122,6 +124,18 @@ export function LogPage() {
   const [addingReasonTag, setAddingReasonTag] = useState(false)
   const [reasonTagError, setReasonTagError] = useState<string | null>(null)
 
+  // GPS coordinates captured once per page visit (ticket 10) -- not
+  // re-requested per entry, since a caregiver logging several entries in one
+  // sitting is almost always still in the same place. `locationCoords` stays
+  // null if permission is denied or the device has no geolocation, in which
+  // case entries are simply logged without a place.
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [locationMapboxPlaceId, setLocationMapboxPlaceId] = useState<string | null>(null)
+  const [locationName, setLocationName] = useState('')
+  const [locationStatus, setLocationStatus] = useState<'locating' | 'geocoding' | 'ready' | 'unavailable'>(
+    'locating',
+  )
+
   useEffect(() => {
     let cancelled = false
     Promise.all([
@@ -153,6 +167,53 @@ export function LogPage() {
       cancelled = true
     }
   }, [setDefaultCategory, setDefaultCategoryInputValue])
+
+  // Captures the device's current GPS coordinates once per page visit (with
+  // permission) and reverse-geocodes them into a suggested place name via
+  // Mapbox (ticket 10). Both steps degrade gracefully: no geolocation
+  // support, denied permission, a missing VITE_MAPBOX_TOKEN, or a failed
+  // Mapbox call all just leave the place field for manual entry rather than
+  // blocking entry creation -- `reverseGeocode` itself already swallows
+  // Mapbox-side failures and resolves to null.
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationStatus('unavailable')
+      return
+    }
+    let cancelled = false
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (cancelled) return
+        const { latitude, longitude } = position.coords
+        setLocationCoords({ latitude, longitude })
+
+        const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
+        if (!token) {
+          setLocationStatus('ready')
+          return
+        }
+        setLocationStatus('geocoding')
+        reverseGeocode(latitude, longitude, token)
+          .then((match) => {
+            if (cancelled) return
+            if (match) {
+              setLocationMapboxPlaceId(match.mapboxPlaceId)
+              setLocationName(match.name)
+            }
+            setLocationStatus('ready')
+          })
+          .catch(() => {
+            if (!cancelled) setLocationStatus('ready')
+          })
+      },
+      () => {
+        if (!cancelled) setLocationStatus('unavailable')
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
@@ -247,18 +308,38 @@ export function LogPage() {
     }
   }
 
+  // Resolves the Location to attach to this entry, if any: no captured
+  // coordinates or no place name (suggested or manually typed) means logging
+  // without a place, same as a caregiver who denied location permission.
+  // `findOrCreateLocation` handles reuse -- passing the same mapboxPlaceId
+  // again reuses the existing household Location instead of duplicating it.
+  async function resolveLocationId(): Promise<string | undefined> {
+    if (!locationCoords) return undefined
+    const name = locationName.trim()
+    if (name === '') return undefined
+    const location = await findOrCreateLocation(dataAccessClient, {
+      name,
+      latitude: locationCoords.latitude,
+      longitude: locationCoords.longitude,
+      mapboxPlaceId: locationMapboxPlaceId,
+    })
+    return location.id
+  }
+
   async function handleAddEntry(event: FormEvent) {
     event.preventDefault()
     setEntryError(null)
     setAddingEntry(true)
     try {
       const foodId = await resolveFoodId()
+      const locationId = await resolveLocationId()
       const entry = await addLogEntry(dataAccessClient, {
         foodId,
         childId: entryChildId,
         status: entryStatus,
         reasonTagIds: entryReasonTagIds,
         notes: entryNotes.trim() === '' ? undefined : entryNotes,
+        locationId,
       })
       setEntries((current) => [entry, ...current])
       foodPicker.setValue(null)
@@ -415,6 +496,37 @@ export function LogPage() {
             minRows={2}
             fullWidth
           />
+
+          {locationStatus === 'locating' && (
+            <Typography variant="body2" color="text.secondary">
+              Getting your location…
+            </Typography>
+          )}
+          {locationStatus === 'unavailable' && (
+            <Typography variant="body2" color="text.secondary">
+              Location unavailable -- this entry will be logged without a place.
+            </Typography>
+          )}
+          {(locationStatus === 'geocoding' || locationStatus === 'ready') && (
+            <TextField
+              label="Place"
+              value={locationName}
+              onChange={(event) => setLocationName(event.target.value)}
+              fullWidth
+              slotProps={
+                locationStatus === 'geocoding'
+                  ? { input: { endAdornment: <CircularProgress size={16} /> } }
+                  : undefined
+              }
+              helperText={
+                locationStatus === 'geocoding'
+                  ? 'Looking up a name for this place…'
+                  : locationMapboxPlaceId
+                    ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
+                    : "Couldn't suggest a name -- enter one, or leave blank to log without a place."
+              }
+            />
+          )}
 
           {entryError && <Alert severity="error">{entryError}</Alert>}
           <Button

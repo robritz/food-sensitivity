@@ -23,3 +23,6 @@ export { addFood, listFoods, searchFoods } from "./foods.js";
 export type { AddFoodInput, Food } from "./foods.js";
 export { addLogEntry, listLogEntries } from "./logEntries.js";
 export type { AddLogEntryInput, LogEntry, LogEntryStatus } from "./logEntries.js";
+export { findOrCreateLocation, reverseGeocode } from "./locations.js";
+export type { FindOrCreateLocationInput, Location } from "./locations.js";
+export type { ReverseGeocodeMatch } from "./mapboxClient.js";
