@@ -28,6 +28,7 @@ export {
   getLogEntryPhotoUrl,
   listFoodStatusSummary,
   listLogEntries,
+  listLogEntryIdsWithPhotos,
   listLogEntryPhotos,
   MAX_PHOTOS_PER_LOG_ENTRY,
   updateLogEntry,
