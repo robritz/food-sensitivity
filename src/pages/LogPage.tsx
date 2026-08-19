@@ -3,12 +3,14 @@ import {
   addFood,
   addLogEntry,
   addReasonTag,
+  deleteLogEntry,
   listCategories,
   listChildren,
   listFoods,
   listLogEntries,
   listReasonTags,
   searchFoods,
+  updateLogEntry,
   type Category,
   type Child,
   type Food,
@@ -16,6 +18,8 @@ import {
   type LogEntryStatus,
   type ReasonTag,
 } from '@food-tracker/data-access'
+import DeleteIcon from '@mui/icons-material/Delete'
+import EditIcon from '@mui/icons-material/Edit'
 import {
   Alert,
   Autocomplete,
@@ -24,11 +28,16 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControl,
   FormControlLabel,
   FormGroup,
   FormLabel,
+  IconButton,
   InputLabel,
   List,
   ListItem,
@@ -121,6 +130,17 @@ export function LogPage() {
   const [newReasonTagInput, setNewReasonTagInput] = useState('')
   const [addingReasonTag, setAddingReasonTag] = useState(false)
   const [reasonTagError, setReasonTagError] = useState<string | null>(null)
+
+  const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null)
+  const [editStatus, setEditStatus] = useState<LogEntryStatus>('liked')
+  const [editReasonTagIds, setEditReasonTagIds] = useState<string[]>([])
+  const [editNotes, setEditNotes] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+
+  const [deletingEntry, setDeletingEntry] = useState<LogEntry | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -270,6 +290,69 @@ export function LogPage() {
       setEntryError(err instanceof Error ? err.message : 'Could not add log entry.')
     } finally {
       setAddingEntry(false)
+    }
+  }
+
+  function openEditDialog(entry: LogEntry) {
+    setEditingEntry(entry)
+    setEditStatus(entry.status)
+    setEditReasonTagIds(entry.reasonTagIds)
+    setEditNotes(entry.notes ?? '')
+    setEditError(null)
+  }
+
+  function closeEditDialog() {
+    if (editSaving) return
+    setEditingEntry(null)
+  }
+
+  function toggleEditReasonTag(id: string) {
+    setEditReasonTagIds((current) =>
+      current.includes(id) ? current.filter((tagId) => tagId !== id) : [...current, id],
+    )
+  }
+
+  async function handleSaveEdit() {
+    if (!editingEntry) return
+    setEditError(null)
+    setEditSaving(true)
+    try {
+      const updated = await updateLogEntry(dataAccessClient, editingEntry.id, {
+        status: editStatus,
+        reasonTagIds: editReasonTagIds,
+        notes: editNotes.trim() === '' ? null : editNotes,
+      })
+      setEntries((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)))
+      setEditingEntry(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not save changes.')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  function openDeleteDialog(entry: LogEntry) {
+    setDeletingEntry(entry)
+    setDeleteError(null)
+  }
+
+  function closeDeleteDialog() {
+    if (deleting) return
+    setDeletingEntry(null)
+  }
+
+  async function handleConfirmDelete() {
+    if (!deletingEntry) return
+    setDeleteError(null)
+    setDeleting(true)
+    try {
+      await deleteLogEntry(dataAccessClient, deletingEntry.id)
+      setEntries((current) => current.filter((entry) => entry.id !== deletingEntry.id))
+      setDeletingEntry(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Could not delete entry.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -445,7 +528,20 @@ export function LogPage() {
           </ListItem>
         )}
         {entries.map((entry) => (
-          <ListItem key={entry.id} alignItems="flex-start">
+          <ListItem
+            key={entry.id}
+            alignItems="flex-start"
+            secondaryAction={
+              <Stack direction="row" spacing={0.5}>
+                <IconButton edge="end" aria-label="Edit entry" onClick={() => openEditDialog(entry)}>
+                  <EditIcon fontSize="small" />
+                </IconButton>
+                <IconButton edge="end" aria-label="Delete entry" onClick={() => openDeleteDialog(entry)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            }
+          >
             <ListItemText
               primary={
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
@@ -465,6 +561,84 @@ export function LogPage() {
           </ListItem>
         ))}
       </List>
+
+      <Dialog open={editingEntry !== null} onClose={closeEditDialog} fullWidth maxWidth="sm">
+        <DialogTitle>Edit entry</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl component="fieldset">
+              <FormLabel component="legend">Status</FormLabel>
+              <RadioGroup row value={editStatus} onChange={(event) => setEditStatus(event.target.value as LogEntryStatus)}>
+                {STATUSES.map((status) => (
+                  <FormControlLabel key={status} value={status} control={<Radio />} label={statusLabel(status)} />
+                ))}
+              </RadioGroup>
+            </FormControl>
+
+            <FormControl component="fieldset">
+              <FormLabel component="legend">Reasons</FormLabel>
+              <FormGroup row>
+                {reasonTags.map((tag) => (
+                  <FormControlLabel
+                    key={tag.id}
+                    control={
+                      <Checkbox checked={editReasonTagIds.includes(tag.id)} onChange={() => toggleEditReasonTag(tag.id)} />
+                    }
+                    label={tag.name}
+                  />
+                ))}
+              </FormGroup>
+            </FormControl>
+
+            <TextField
+              label="Notes"
+              value={editNotes}
+              onChange={(event) => setEditNotes(event.target.value)}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+
+            {editError && <Alert severity="error">{editError}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeEditDialog} disabled={editSaving}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveEdit}
+            disabled={editSaving || editReasonTagIds.length === 0}
+          >
+            {editSaving ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deletingEntry !== null} onClose={closeDeleteDialog}>
+        <DialogTitle>Delete entry?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            This removes the entry for{' '}
+            {deletingEntry ? `${nameById(children, deletingEntry.childId)} — ${nameById(foods, deletingEntry.foodId)}` : ''}{' '}
+            permanently. This can't be undone.
+          </Typography>
+          {deleteError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {deleteError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDeleteDialog} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleConfirmDelete} disabled={deleting}>
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Divider sx={{ my: 3 }} />
 
