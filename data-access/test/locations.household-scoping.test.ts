@@ -3,7 +3,7 @@ import { addChild } from "../src/children.js";
 import { listCategories, listReasonTags } from "../src/catalog.js";
 import { addFood } from "../src/foods.js";
 import { addLogEntry } from "../src/logEntries.js";
-import { findOrCreateLocation } from "../src/locations.js";
+import { findOrCreateLocation, listLocations } from "../src/locations.js";
 import type { DataAccessClient } from "../src/client.js";
 import type { Category, ReasonTag } from "../src/catalog.js";
 import { addCaregiverToHousehold, admin, signUpFixture as signUpHouseholdFixture } from "./helpers.js";
@@ -175,6 +175,43 @@ describe("findOrCreateLocation", () => {
     });
 
     expect(error).not.toBeNull();
+  });
+});
+
+describe("listLocations", () => {
+  it("lists every Location captured by the caller's household, for ticket 13's location filter", async () => {
+    const founder = await signUpFixture("Household Listing Locations");
+    const home = await findOrCreateLocation(founder.client, {
+      name: "Home",
+      latitude: 40.0,
+      longitude: -75.0,
+      mapboxPlaceId: "poi.list-home",
+    });
+    const park = await findOrCreateLocation(founder.client, {
+      name: "Park",
+      latitude: 40.1,
+      longitude: -75.1,
+      mapboxPlaceId: "poi.list-park",
+    });
+
+    const locations = await listLocations(founder.client);
+
+    expect(locations.map((l) => l.id).sort()).toEqual([home.id, park.id].sort());
+  });
+
+  it("scopes listed Locations to household -- another household's Locations aren't visible", async () => {
+    const householdA = await signUpFixture("Household A List Locations");
+    const householdB = await signUpFixture("Household B List Locations");
+    const locationA = await findOrCreateLocation(householdA.client, {
+      name: "Only In A",
+      latitude: 5,
+      longitude: 6,
+      mapboxPlaceId: "poi.list-only-in-a",
+    });
+
+    const locationsSeenByB = await listLocations(householdB.client);
+
+    expect(locationsSeenByB.map((l) => l.id)).not.toContain(locationA.id);
   });
 });
 
