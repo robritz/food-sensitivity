@@ -1,7 +1,12 @@
 ## Agent skills
 
-- When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
-- When creating a new task or parallelizing, always create a new git branch. 
+When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+
+When creating a new task or parallelizing, always create a new git branch.
+
+Use absolute paths instead of cd ... && ... chains.
+
+Avoid output redirection unless it's actually necessary.
 
 ### Issue tracker
 

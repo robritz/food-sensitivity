@@ -4,7 +4,7 @@
 
 **Blocked by:** 09 (Entry detail fields — added photo upload with no corresponding display)
 
-**Status:** needs-triage
+**Status:** ready-for-agent
 
 - [ ] A caregiver can click/tap a logged entry in `LogPage.tsx`'s entry list to open a single-entry detail view
 - [ ] The detail view renders any photos attached to that entry, fetched via `listLogEntryPhotos` + `getLogEntryPhotoUrl`
