@@ -6,13 +6,17 @@
  * itself only needs a DOM container and is driven imperatively.
  *
  * mapbox-gl owns projection/fitting natively, so there's no hand-rolled
- * Web Mercator math to unit test here (unlike `staticMap.ts` before it).
+ * Web Mercator math to unit test here (unlike `staticMap.ts` before it) --
+ * the one piece of pure math this component does need, spreading apart
+ * markers whose real coordinates are too close to render as separate
+ * screen pixels, lives in `../lib/pinLayout.ts` and is tested there.
  */
 import type { LocationPin } from '@food-tracker/data-access'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useEffect, useRef } from 'react'
 import { PIN_HEX } from '../lib/pinColors'
+import { spreadOverlappingPins } from '../lib/pinLayout'
 
 /** Zoom used to center on a single Location -- close enough to be useful
  * without a spread of points to size the view around. */
@@ -57,10 +61,18 @@ export function InteractiveMap({ pins, token, onSelectPin }: InteractiveMapProps
     const map = mapRef.current
     if (!map) return
 
+    // Distinct Locations captured only meters apart (e.g. either side of a
+    // street corner) would otherwise render on the same screen pixel and
+    // hide each other -- render markers at their spread-out position, never
+    // at the raw (possibly-coincident) Location coordinates.
+    const positions = spreadOverlappingPins(
+      pins.map((pin) => ({ id: pin.location.id, latitude: pin.location.latitude, longitude: pin.location.longitude })),
+    )
+    const positionFor = (pin: LocationPin) => positions.get(pin.location.id) ?? pin.location
+
     const markers = pins.map((pin) => {
-      const marker = new mapboxgl.Marker({ color: PIN_HEX[pin.color] })
-        .setLngLat([pin.location.longitude, pin.location.latitude])
-        .addTo(map)
+      const { latitude, longitude } = positionFor(pin)
+      const marker = new mapboxgl.Marker({ color: PIN_HEX[pin.color] }).setLngLat([longitude, latitude]).addTo(map)
       const el = marker.getElement()
       el.style.cursor = 'pointer'
       el.setAttribute('role', 'button')
@@ -82,17 +94,15 @@ export function InteractiveMap({ pins, token, onSelectPin }: InteractiveMapProps
     })
 
     if (pins.length === 1) {
-      const [{ location }] = pins
-      map.jumpTo({ center: [location.longitude, location.latitude], zoom: SINGLE_POINT_ZOOM })
+      const { latitude, longitude } = positionFor(pins[0])
+      map.jumpTo({ center: [longitude, latitude], zoom: SINGLE_POINT_ZOOM })
     } else if (pins.length > 1) {
       const [first, ...rest] = pins
-      const bounds = rest.reduce(
-        (acc, pin) => acc.extend([pin.location.longitude, pin.location.latitude]),
-        new mapboxgl.LngLatBounds(
-          [first.location.longitude, first.location.latitude],
-          [first.location.longitude, first.location.latitude],
-        ),
-      )
+      const firstPosition = positionFor(first)
+      const bounds = rest.reduce((acc, pin) => {
+        const { latitude, longitude } = positionFor(pin)
+        return acc.extend([longitude, latitude])
+      }, new mapboxgl.LngLatBounds([firstPosition.longitude, firstPosition.latitude], [firstPosition.longitude, firstPosition.latitude]))
       map.fitBounds(bounds, { padding: FIT_BOUNDS_PADDING, maxZoom: MAX_FIT_ZOOM })
     }
 
