@@ -247,6 +247,36 @@ export interface ListFoodStatusSummaryOptions {
   search?: string;
 }
 
+/** Fetches every entry in the caller's household joined with its Food (for
+ * `filterLogEntries`' category/name matching), then applies ticket 13's
+ * filters/search if given. Shared by `listFoodStatusSummary` (which further
+ * collapses this to one row per Food/Child pair) and `listFilteredLogEntries`
+ * (which doesn't) -- both need the same joined-and-filtered starting point,
+ * just reduced differently. */
+async function fetchFilteredEntriesWithFood(
+  client: DataAccessClient,
+  filters?: ActiveFilters,
+  search?: string,
+): Promise<LogEntryWithFood[]> {
+  const { data, error } = await client
+    .from("log_entry")
+    .select(
+      "id, household_id, food_id, child_id, status, notes, intensity, occurred_at, location_id, created_by, created_at, log_entry_reason_tag(reason_tag_id), food(id, name, category_id)",
+    )
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  const entriesWithFood: LogEntryWithFood[] = data.map((row) => ({
+    entry: toLogEntry(
+      row,
+      row.log_entry_reason_tag.map((tag) => tag.reason_tag_id),
+    ),
+    food: { id: row.food.id, name: row.food.name, categoryId: row.food.category_id },
+  }));
+
+  return filters || search ? filterLogEntries(entriesWithFood, filters ?? {}, search) : entriesWithFood;
+}
+
 /** Lists the most recent status for every (Food, Child) pair the caller's
  * household has logged an entry for -- the "one row per Food per child"
  * view the browse list (ticket 12) renders, optionally narrowed by ticket
@@ -265,26 +295,7 @@ export async function listFoodStatusSummary(
   client: DataAccessClient,
   options?: ListFoodStatusSummaryOptions,
 ): Promise<FoodStatusSummary[]> {
-  const { data, error } = await client
-    .from("log_entry")
-    .select(
-      "id, household_id, food_id, child_id, status, notes, intensity, occurred_at, location_id, created_by, created_at, log_entry_reason_tag(reason_tag_id), food(id, name, category_id)",
-    )
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-
-  const entriesWithFood: LogEntryWithFood[] = data.map((row) => ({
-    entry: toLogEntry(
-      row,
-      row.log_entry_reason_tag.map((tag) => tag.reason_tag_id),
-    ),
-    food: { id: row.food.id, name: row.food.name, categoryId: row.food.category_id },
-  }));
-
-  const matching =
-    options?.filters || options?.search
-      ? filterLogEntries(entriesWithFood, options?.filters ?? {}, options?.search)
-      : entriesWithFood;
+  const matching = await fetchFilteredEntriesWithFood(client, options?.filters, options?.search);
 
   const latestByPair = new Map<string, FoodStatusSummary>();
   for (const { entry } of matching) {
@@ -299,6 +310,28 @@ export async function listFoodStatusSummary(
     });
   }
   return Array.from(latestByPair.values());
+}
+
+export interface ListFilteredLogEntriesOptions {
+  /** Ticket 13's active filter selection -- same semantics as
+   * `ListFoodStatusSummaryOptions.filters`. */
+  filters?: ActiveFilters;
+  /** Free-text search against Food name/brand, combined with `filters` as AND. */
+  search?: string;
+}
+
+/** Lists every entry in the caller's household matching ticket 13's
+ * filters/search, most recent first -- the full (non-deduped) list ticket
+ * 16's export flow reads from. Unlike `listFoodStatusSummary`, which
+ * collapses to one row per Food/Child pair for the browse list, export needs
+ * every matching entry so a caregiver's full filtered history round-trips
+ * through the file, not just each pair's latest status. */
+export async function listFilteredLogEntries(
+  client: DataAccessClient,
+  options?: ListFilteredLogEntriesOptions,
+): Promise<LogEntry[]> {
+  const matching = await fetchFilteredEntriesWithFood(client, options?.filters, options?.search);
+  return matching.map(({ entry }) => entry);
 }
 
 const ENTRY_PHOTOS_BUCKET = "entry-photos";
