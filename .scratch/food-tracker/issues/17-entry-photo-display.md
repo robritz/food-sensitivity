@@ -4,12 +4,12 @@
 
 **Blocked by:** 09 (Entry detail fields — added photo upload with no corresponding display)
 
-**Status:** ready-for-agent
+**Status:** done — implemented on `feature/17-entry-photo-display`, not yet merged
 
-- [ ] A caregiver can click/tap a logged entry in `LogPage.tsx`'s entry list to open a single-entry detail view
-- [ ] The detail view renders any photos attached to that entry, fetched via `listLogEntryPhotos` + `getLogEntryPhotoUrl`
-- [ ] Photos render at a reasonable size and can be opened larger (e.g. lightbox / full image)
-- [ ] Zero-photo entries are handled gracefully (no broken image / empty state)
+- [x] A caregiver can click/tap a logged entry in `LogPage.tsx`'s entry list to open a single-entry detail view
+- [x] The detail view renders any photos attached to that entry, fetched via `listLogEntryPhotos` + `getLogEntryPhotoUrl`
+- [x] Photos render at a reasonable size and can be opened larger (e.g. lightbox / full image)
+- [x] Zero-photo entries are handled gracefully (no broken image / empty state)
 
 **Notes for whoever picks this up:**
 - `listLogEntryPhotos` and `getLogEntryPhotoUrl` (`data-access/src/logEntries.ts`, ticket 09) already exist and are exported from `data-access/src/index.ts`, but no UI calls them yet — this is purely wiring existing data-access functions into a view, no new backend/migration work expected.
@@ -17,3 +17,5 @@
 - Ticket 15 (edit/delete entries) separately flagged that photo *editing* (add/remove photos on an existing entry) isn't wired into the edit dialog either. That's a related but separate concern (editing vs. viewing) — likely wants to reuse whatever surface this ticket builds, but is not in scope here.
 - Ticket 12's Browse page tap-through opens a per-Food/child history dialog (all entries for that Food+child pair), not a single-entry view — decide whether this ticket's detail view is reachable from there too, or is purely a `LogPage.tsx`-list affordance.
 - Found while investigating a bug report: the "Add photo" upload itself was broken (`handlePhotoInputChange` read a live `FileList` after already resetting the input's `value`, so it always saw zero files) and has been fixed separately. This ticket is the follow-up gap discovered once upload started working — uploaded photos still don't render anywhere.
+
+**Resolution notes:** Implemented as a `Dialog`-based detail view in `LogPage.tsx`, matching the existing edit/delete dialog and `BrowsePage.tsx`'s per-Food/child history dialog conventions already in the codebase (same close-button/title layout, load-on-open pattern). Signed photo URLs are fetched fresh every time the detail dialog opens and are never persisted into `entries`/list state. Photos render as a thumbnail grid; tapping a thumbnail opens a second `Dialog` as the lightbox. **Not** wired into ticket 12's Browse page dialog — that surface lists several entries compactly for a Food/Child pair, so folding in full single-entry detail (with a photo lightbox) is a bigger reshuffle better left as its own follow-up, the same way ticket 15's photo-editing gap was called out rather than bundled in here.

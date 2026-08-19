@@ -2,9 +2,9 @@
 
 **What to build:** Replace the map view's static raster image with a real interactive map (pan, zoom, pins that stay correctly positioned as the view changes).
 
-**Blocked by:** 14 (Map view)
+**Blocked by:** ~~14 (Map view)~~ — merged to main, unblocked
 
-**Status:** needs-triage
+**Status:** ready-for-agent
 
 - [ ] Map supports pan (drag) and zoom (scroll/pinch) instead of a fixed static image
 - [ ] Pins stay positioned at their correct Location coordinates as the map is panned/zoomed

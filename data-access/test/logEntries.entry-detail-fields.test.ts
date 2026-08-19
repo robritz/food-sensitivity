@@ -7,6 +7,7 @@ import {
   addLogEntryPhoto,
   getLogEntryPhotoUrl,
   listLogEntries,
+  listLogEntryIdsWithPhotos,
   listLogEntryPhotos,
   MAX_PHOTOS_PER_LOG_ENTRY,
 } from "../src/logEntries.js";
@@ -191,6 +192,29 @@ describe("log entry photos", () => {
 
     const photos = await listLogEntryPhotos(founder.client, entry.id);
     expect(photos.map((p) => p.path)).toContain(photo.path);
+  });
+
+  it("lists which entries in the household have at least one photo", async () => {
+    const founder = await signUpFixture("Household Photo Ids");
+    const { child, food, texture } = await seedEntryPrereqs(founder.client);
+    const withPhoto = await addLogEntry(founder.client, {
+      foodId: food.id,
+      childId: child.id,
+      status: "liked",
+      reasonTagIds: [texture.id],
+    });
+    const withoutPhoto = await addLogEntry(founder.client, {
+      foodId: food.id,
+      childId: child.id,
+      status: "liked",
+      reasonTagIds: [texture.id],
+    });
+    await addLogEntryPhoto(founder.client, withPhoto.id, fakePhoto());
+
+    const ids = await listLogEntryIdsWithPhotos(founder.client);
+
+    expect(ids.has(withPhoto.id)).toBe(true);
+    expect(ids.has(withoutPhoto.id)).toBe(false);
   });
 
   it("produces a signed URL for viewing an attached photo", async () => {

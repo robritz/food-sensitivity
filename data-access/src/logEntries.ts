@@ -391,6 +391,23 @@ export async function listLogEntryPhotos(client: DataAccessClient, logEntryId: s
   }));
 }
 
+/** Ids of every LogEntry in the caller's household that has at least one
+ * attached photo -- one `list` call against the household-level storage
+ * prefix (folder names are logEntryIds, per `addLogEntryPhoto`'s path
+ * layout) rather than one `listLogEntryPhotos` call per entry. Used to
+ * decide which entries get a photo indicator in list views. */
+export async function listLogEntryIdsWithPhotos(client: DataAccessClient): Promise<Set<string>> {
+  const identity = await getCurrentCaregiver(client);
+  if (!identity) {
+    throw new Error("No signed-in caregiver -- cannot list photos without a household.");
+  }
+
+  const { data, error } = await client.storage.from(ENTRY_PHOTOS_BUCKET).list(identity.householdId);
+  if (error) throw error;
+
+  return new Set(data.map((entry) => entry.name));
+}
+
 /** A short-lived signed URL for viewing a private entry photo -- the bucket
  * isn't public, so photos aren't reachable by a bare storage URL. */
 export async function getLogEntryPhotoUrl(
