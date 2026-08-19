@@ -4,9 +4,9 @@
 
 **Blocked by:** 09 (Entry detail fields: intensity, backdating, photos), 10 (Location capture, reverse geocoding & reuse)
 
-**Status:** ready-for-agent
+**Status:** done — implemented on `feature/11-offline-sync`, not yet merged
 
-- [ ] Creating an entry while offline succeeds locally and is visibly queued, not yet on the server
-- [ ] Reconnecting triggers automatic sync of queued entries (including photos and location) to Supabase
-- [ ] A synced entry appears exactly once — no duplicate on reconnect or repeated sync attempts
-- [ ] Integration test simulating offline queue → reconnect → sync, asserting a single persisted copy
+- [x] Creating an entry while offline succeeds locally and is visibly queued, not yet on the server
+- [x] Reconnecting triggers automatic sync of queued entries (including photos and location) to Supabase
+- [x] A synced entry appears exactly once — no duplicate on reconnect or repeated sync attempts
+- [x] Integration test simulating offline queue → reconnect → sync, asserting a single persisted copy

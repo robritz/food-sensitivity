@@ -16,6 +16,16 @@ export interface Location {
 }
 
 export interface FindOrCreateLocationInput {
+  /** Caller-supplied id, used as the row's primary key instead of the
+   * column's `gen_random_uuid()` default. Optional -- omit for the normal
+   * online path. The offline sync queue (ticket 11) passes the id it
+   * generated at enqueue time here on every sync attempt: `mapboxPlaceId`
+   * reuse (below) only dedupes a *Mapbox-matched* place, so a caregiver's
+   * custom (no-match) Location has nothing else stable to key a retry off
+   * of -- without this, a sync retry that resolves the location again but
+   * fails before the log_entry it's attached to actually lands would create
+   * a second, orphaned custom Location every attempt. */
+  id?: string;
   /** Caregiver-confirmed or manually-entered name -- what actually gets
    * saved, independent of whatever Mapbox suggested. */
   name: string;
@@ -75,6 +85,7 @@ export async function findOrCreateLocation(
   const { data, error } = await client
     .from("location")
     .insert({
+      ...(input.id ? { id: input.id } : {}),
       household_id: identity.householdId,
       name: input.name,
       latitude: input.latitude,
@@ -84,18 +95,37 @@ export async function findOrCreateLocation(
     .select()
     .single();
   if (error) {
-    // 23505 = unique_violation on (household_id, mapbox_place_id): another
-    // request for the same place id raced this one and won between our
-    // lookup above and this insert. Fall back to the row it just created
-    // instead of surfacing a spurious duplicate-key error.
-    if (error.code === "23505" && input.mapboxPlaceId) {
-      const { data: existing, error: raceFindError } = await client
-        .from("location")
-        .select()
-        .eq("mapbox_place_id", input.mapboxPlaceId)
-        .single();
-      if (raceFindError) throw raceFindError;
-      return toLocation(existing);
+    if (error.code === "23505") {
+      // 23505 = unique_violation, from one of two possible constraints:
+      //  - the primary key (`id`), when `input.id` was supplied and a prior
+      //    attempt already inserted this exact row -- a sync retry. Check
+      //    this first: it's unambiguous (only our own retry could conflict
+      //    on an id we generated) and covers *every* Location, unlike the
+      //    mapbox_place_id constraint below, which only exists for
+      //    Mapbox-matched places.
+      //  - (household_id, mapbox_place_id), when another request for the
+      //    same place id raced this one and won between our lookup above
+      //    and this insert.
+      // Either way, fall back to the row that's actually there instead of
+      // surfacing a spurious duplicate-key error.
+      if (input.id) {
+        const { data: existingById, error: idFindError } = await client
+          .from("location")
+          .select()
+          .eq("id", input.id)
+          .maybeSingle();
+        if (idFindError) throw idFindError;
+        if (existingById) return toLocation(existingById);
+      }
+      if (input.mapboxPlaceId) {
+        const { data: existingByPlaceId, error: placeIdFindError } = await client
+          .from("location")
+          .select()
+          .eq("mapbox_place_id", input.mapboxPlaceId)
+          .single();
+        if (placeIdFindError) throw placeIdFindError;
+        return toLocation(existingByPlaceId);
+      }
     }
     throw error;
   }

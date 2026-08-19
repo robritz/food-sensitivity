@@ -71,6 +71,13 @@ describe("syncQueuedEntries", () => {
         notes: "Logged offline at the park",
       },
       location: {
+        // No mapboxPlaceId -- a custom/manual place, the case with no
+        // unique constraint of its own to fall back on for dedup (unlike a
+        // Mapbox-matched place), so this test's repeated-sync assertion
+        // below actually exercises the risky path: only `location.id`
+        // (generated once here, like `clientId` above, and reused
+        // unchanged on every retry) protects it from duplicating.
+        id: crypto.randomUUID(),
         name: "Riverside Park",
         latitude: 40.789,
         longitude: -73.955,
@@ -103,6 +110,18 @@ describe("syncQueuedEntries", () => {
 
     const photos = await listLogEntryPhotos(founder.client, queued.clientId);
     expect(photos).toHaveLength(1);
+
+    // The location itself must also land exactly once -- a custom (no
+    // mapboxPlaceId) location has no unique constraint to fall back on, so
+    // this is exactly the case a naive implementation would silently
+    // duplicate on the second sync attempt above.
+    const { data: locationRows, error: locationError } = await admin
+      .from("location")
+      .select("id")
+      .eq("household_id", founder.identity.householdId);
+    if (locationError) throw locationError;
+    expect(locationRows).toHaveLength(1);
+    expect(locationRows[0].id).toBe(queued.location?.id);
   });
 
   it("keeps failed items reported as failed without throwing, so the caller can leave them queued for the next reconnect", async () => {

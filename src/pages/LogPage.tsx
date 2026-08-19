@@ -429,13 +429,21 @@ export function LogPage() {
 
   // Resolves the Location to attach to this entry, if any: no captured
   // coordinates or no place name (suggested or manually typed) means logging
-  // without a place, same as a caregiver who denied location permission.
+  // Shared by `resolveLocationId` and `buildLocationCapture` below: no
+  // captured coordinates, or no place name (suggested or manually typed),
+  // both mean "log without a place" -- returns undefined either way so both
+  // callers can bail out the same way.
+  function resolvedLocationName(): string | undefined {
+    if (!locationCoords) return undefined
+    const name = locationName.trim()
+    return name === '' ? undefined : name
+  }
+
   // `findOrCreateLocation` handles reuse -- passing the same mapboxPlaceId
   // again reuses the existing household Location instead of duplicating it.
   async function resolveLocationId(): Promise<string | undefined> {
-    if (!locationCoords) return undefined
-    const name = locationName.trim()
-    if (name === '') return undefined
+    const name = resolvedLocationName()
+    if (name === undefined || !locationCoords) return undefined
     const location = await findOrCreateLocation(dataAccessClient, {
       name,
       latitude: locationCoords.latitude,
@@ -446,14 +454,18 @@ export function LogPage() {
   }
 
   // The offline counterpart of `resolveLocationId`: same "no coords or no
-  // name means logging without a place" rule, but never calls
-  // `findOrCreateLocation` (a Supabase round-trip) -- that's deferred to
-  // sync time, once `syncQueuedEntries` actually has a connection to use.
+  // name means logging without a place" rule (via `resolvedLocationName`),
+  // but never calls `findOrCreateLocation` (a Supabase round-trip) -- that's
+  // deferred to sync time, once `syncQueuedEntries` actually has a
+  // connection to use. Generates its own `id` (rather than leaving it for
+  // `findOrCreateLocation` to assign one at sync time) so a retried sync
+  // attempt resolves to the same Location row instead of creating a second
+  // one -- see `FindOrCreateLocationInput.id`.
   function buildLocationCapture(): QueuedLocationCapture | undefined {
-    if (!locationCoords) return undefined
-    const name = locationName.trim()
-    if (name === '') return undefined
+    const name = resolvedLocationName()
+    if (name === undefined || !locationCoords) return undefined
     return {
+      id: crypto.randomUUID(),
       name,
       latitude: locationCoords.latitude,
       longitude: locationCoords.longitude,
