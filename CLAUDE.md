@@ -1,5 +1,7 @@
 ## Agent skills
 
+When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+
 ### Issue tracker
 
 Local markdown files under `.scratch/<feature>/issues/`. See `docs/agents/issue-tracker.md`.
