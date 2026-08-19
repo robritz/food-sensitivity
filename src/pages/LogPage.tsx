@@ -839,7 +839,16 @@ export function LogPage() {
             <TextField
               label="Place"
               value={locationName}
-              onChange={(event) => setLocationName(event.target.value)}
+              onChange={(event) => {
+                setLocationName(event.target.value)
+                // Editing the suggested name means it's no longer that
+                // Mapbox place's confirmed name -- clear the id so
+                // `resolveLocationId`/`buildLocationCapture` treat this as a
+                // custom capture (a new Location) instead of reusing (and
+                // silently discarding the edit for) whatever's already saved
+                // under the original suggestion's mapboxPlaceId.
+                setLocationMapboxPlaceId(null)
+              }}
               fullWidth
               slotProps={
                 locationStatus === 'geocoding'
