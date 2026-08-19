@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** done — implemented on `feature/12-browse-list`, not yet merged
+**Status:** done — merged to main
 
 - [x] List shows one row per Food per child (status is per Food/child pair)
 - [x] Each row shows the most recent status for that Food/child

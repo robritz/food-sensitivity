@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** done — implemented on `feature/15-edit-delete-entries`, not yet merged
+**Status:** done — merged to main
 
 - [x] A caregiver can edit any field of an existing entry (status, reasons, notes, intensity, date, photos, location) regardless of who created it -- intensity/date/photos/location don't exist on `log_entry` yet (tickets 09/10, running concurrently, not yet merged into this branch's base); status/reasons/notes are editable now, and `updateLogEntry`'s input shape is designed so those fields are a small additive change later (see implementation notes)
 - [x] A caregiver can delete an existing entry
@@ -20,3 +20,9 @@
 - UI: added edit/delete icon buttons to each entry row in the existing chronological list in `src/pages/LogPage.tsx` (ticket 06's list, not ticket 12's forthcoming browse UI, per the ticket's guidance to minimize conflicts with concurrent sibling tickets 09/10/12). Edit opens an MUI `Dialog` pre-filled with status/reasons/notes; delete opens a confirm `Dialog`. No redesign of the page.
 - Integration tests: `data-access/test/logEntries.edit-delete.test.ts`, mirroring `logEntries.core-log-entry.test.ts`'s fixture/cleanup conventions. Covers: editing status/notes/reason-tag-replacement, clearing notes to null, the empty-reasonTagIds rejection, a second caregiver (not the creator) successfully editing/deleting, editing/deleting one entry leaving a sibling entry for the same Food/Child pair untouched, and -- the ticket's explicit ask -- an outsider caregiver's update/delete being rejected (asserted both via `.rejects.toThrow()` and by confirming the row is unchanged via the service-role client).
 - **Not yet verified against a live database.** Per instructions, the local Supabase stack was not started (three sibling agents were running concurrently against the same shared Docker ports/project). The migration SQL and test file were written by careful reading of ticket 06's existing schema/policies/patterns but have not been executed. Before merging: run `cd data-access && npm run supabase:reset && npm run gen:types && npm test` against a live instance to confirm the migration applies cleanly and both the happy-path and outsider-rejection tests pass.
+
+**Post-merge verification (this branch merged last, after 09/10/12):**
+- Migration renamed `20260819100000_edit_delete_log_entries.sql` → `20260819110000_edit_delete_log_entries.sql`: it shared its timestamp with ticket 09's migration (`20260819100000_entry_detail_fields.sql`) despite the different filename -- Supabase keys `schema_migrations` by the timestamp only, so both tried to insert the same primary key and `supabase db reset` failed with a duplicate-key error until renamed.
+- `UpdateLogEntryInput` extended with `intensity?`, `occurredAt?`, `locationId?` (all nullable-to-clear / undefined-to-leave-unchanged, matching `notes?`'s convention) now that 09/10 are merged, exactly the extension point this ticket's implementation deliberately left open. `updateLogEntry`'s patch-building and intensity range validation extended to match.
+- The edit dialog UI in `LogPage.tsx` still only exposes status/reasons/notes -- intensity/date/location/photo editing exist at the data-access layer but are not yet wired into the dialog. Flagged here as a follow-up, not done as part of this merge pass.
+- Full suite verified live: `npm run supabase:reset && npm run gen:types && npm test` (data-access, 88/88 passing across all four merged tickets) plus root `npm run build`, `npm run lint`, `npm run test`, all clean.

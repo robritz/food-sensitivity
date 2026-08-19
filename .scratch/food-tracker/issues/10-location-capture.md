@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** done — implemented on `feature/10-location-capture`, not yet merged
+**Status:** done — merged to main
 
 - [x] Creating an entry captures the device's current GPS coordinates (with permission)
 - [x] Coordinates are reverse-geocoded via Mapbox into a suggested place name

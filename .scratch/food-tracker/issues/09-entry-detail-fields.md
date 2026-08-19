@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** done — implemented on `feature/09-entry-detail-fields`, not yet merged
+**Status:** done — merged to main
 
 - [x] A caregiver can optionally set an intensity rating (1–5) on an entry
 - [x] Selecting "Inconsistent" status prompts (but does not require) a note
