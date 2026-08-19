@@ -6,10 +6,12 @@ import {
   addReasonTag,
   deleteLogEntry,
   findOrCreateLocation,
+  getLogEntryPhotoUrl,
   listCategories,
   listChildren,
   listFoods,
   listLogEntries,
+  listLogEntryPhotos,
   listReasonTags,
   MAX_PHOTOS_PER_LOG_ENTRY,
   reverseGeocode,
@@ -19,11 +21,13 @@ import {
   type Child,
   type Food,
   type LogEntry,
+  type LogEntryPhoto,
   type LogEntryStatus,
   type QueuedLocationCapture,
   type QueuedLogEntry,
   type ReasonTag,
 } from '@food-tracker/data-access'
+import CloseIcon from '@mui/icons-material/Close'
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
 import {
@@ -47,6 +51,7 @@ import {
   InputLabel,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   MenuItem,
   Radio,
@@ -63,6 +68,7 @@ import { dataAccessClient } from '../lib/dataAccessClient'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 import { filterFoodsOffline } from '../lib/offlineFoodSearch'
+import { sortLogEntryPhotos } from '../lib/entryPhotos'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 
@@ -187,6 +193,17 @@ export function LogPage() {
   const [deletingEntry, setDeletingEntry] = useState<LogEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // Single-entry detail view (ticket 17). `viewingPhotoUrls` holds freshly
+  // signed URLs fetched each time the dialog opens -- they expire after 60s
+  // (private bucket), so they're never persisted onto `entries`/list state,
+  // only kept here for as long as the dialog is open.
+  const [viewingEntry, setViewingEntry] = useState<LogEntry | null>(null)
+  const [viewingPhotos, setViewingPhotos] = useState<LogEntryPhoto[]>([])
+  const [viewingPhotoUrls, setViewingPhotoUrls] = useState<Record<string, string>>({})
+  const [viewingPhotosLoading, setViewingPhotosLoading] = useState(false)
+  const [viewingPhotosError, setViewingPhotosError] = useState<string | null>(null)
+  const [lightboxPath, setLightboxPath] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -657,6 +674,37 @@ export function LogPage() {
     }
   }
 
+  // Opens the single-entry detail view and fetches its photos fresh (rather
+  // than in the load-time useEffect) so the signed URLs are as new as
+  // possible when they're actually rendered -- see the note on
+  // `viewingPhotoUrls` above.
+  function openDetailDialog(entry: LogEntry) {
+    setViewingEntry(entry)
+    setViewingPhotos([])
+    setViewingPhotoUrls({})
+    setViewingPhotosError(null)
+    setLightboxPath(null)
+    setViewingPhotosLoading(true)
+    listLogEntryPhotos(dataAccessClient, entry.id)
+      .then(async (photos) => {
+        const sorted = sortLogEntryPhotos(photos)
+        const urls = await Promise.all(sorted.map((photo) => getLogEntryPhotoUrl(dataAccessClient, photo.path)))
+        setViewingPhotos(sorted)
+        setViewingPhotoUrls(Object.fromEntries(sorted.map((photo, index) => [photo.path, urls[index]])))
+      })
+      .catch((err) => {
+        setViewingPhotosError(err instanceof Error ? err.message : 'Could not load photos.')
+      })
+      .finally(() => {
+        setViewingPhotosLoading(false)
+      })
+  }
+
+  function closeDetailDialog() {
+    setViewingEntry(null)
+    setLightboxPath(null)
+  }
+
   function nameById(list: { id: string; name: string }[], id: string): string {
     return list.find((item) => item.id === id)?.name ?? 'Unknown'
   }
@@ -951,6 +999,7 @@ export function LogPage() {
           <ListItem
             key={entry.id}
             alignItems="flex-start"
+            disablePadding
             secondaryAction={
               <Stack direction="row" spacing={0.5}>
                 <IconButton edge="end" aria-label="Edit entry" onClick={() => openEditDialog(entry)}>
@@ -962,23 +1011,29 @@ export function LogPage() {
               </Stack>
             }
           >
-            <ListItemText
-              primary={
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Typography component="span" sx={{ fontWeight: 500 }}>
-                    {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)}
-                  </Typography>
-                  <Chip size="small" label={statusLabel(entry.status)} />
-                  {entry.intensity !== null && <Rating size="small" value={entry.intensity} max={5} readOnly />}
-                </Stack>
-              }
-              secondary={
-                <>
-                  {new Date(entry.occurredAt).toLocaleString()} — {reasonTagNames(entry.reasonTagIds)}
-                  {entry.notes ? ` — "${entry.notes}"` : ''}
-                </>
-              }
-            />
+            <ListItemButton
+              alignItems="flex-start"
+              onClick={() => openDetailDialog(entry)}
+              sx={{ pr: 10 }}
+            >
+              <ListItemText
+                primary={
+                  <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Typography component="span" sx={{ fontWeight: 500 }}>
+                      {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)}
+                    </Typography>
+                    <Chip size="small" label={statusLabel(entry.status)} />
+                    {entry.intensity !== null && <Rating size="small" value={entry.intensity} max={5} readOnly />}
+                  </Stack>
+                }
+                secondary={
+                  <>
+                    {new Date(entry.occurredAt).toLocaleString()} — {reasonTagNames(entry.reasonTagIds)}
+                    {entry.notes ? ` — "${entry.notes}"` : ''}
+                  </>
+                }
+              />
+            </ListItemButton>
           </ListItem>
         ))}
       </List>
@@ -1059,6 +1114,93 @@ export function LogPage() {
             {deleting ? 'Deleting…' : 'Delete'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog open={viewingEntry !== null} onClose={closeDetailDialog} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {viewingEntry ? `${nameById(children, viewingEntry.childId)} — ${nameById(foods, viewingEntry.foodId)}` : ''}
+          <IconButton aria-label="Close" onClick={closeDetailDialog} size="small">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {viewingEntry && (
+            <Stack spacing={2}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                <Chip size="small" label={statusLabel(viewingEntry.status)} />
+                {viewingEntry.intensity !== null && (
+                  <Rating size="small" value={viewingEntry.intensity} max={5} readOnly />
+                )}
+              </Stack>
+              <Typography variant="body2" color="text.secondary">
+                {new Date(viewingEntry.occurredAt).toLocaleString()}
+              </Typography>
+              <Typography variant="body2">Reasons: {reasonTagNames(viewingEntry.reasonTagIds)}</Typography>
+              {viewingEntry.notes && <Typography variant="body2">"{viewingEntry.notes}"</Typography>}
+
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Photos
+                </Typography>
+                {viewingPhotosLoading && (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                  </Box>
+                )}
+                {viewingPhotosError && <Alert severity="error">{viewingPhotosError}</Alert>}
+                {!viewingPhotosLoading && !viewingPhotosError && viewingPhotos.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    No photos attached to this entry.
+                  </Typography>
+                )}
+                {!viewingPhotosLoading && !viewingPhotosError && viewingPhotos.length > 0 && (
+                  <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                    {viewingPhotos.map((photo) => (
+                      <Box
+                        key={photo.path}
+                        component="button"
+                        type="button"
+                        onClick={() => setLightboxPath(photo.path)}
+                        aria-label={`View ${photo.name} full size`}
+                        sx={{
+                          p: 0,
+                          border: 'none',
+                          borderRadius: 1,
+                          overflow: 'hidden',
+                          cursor: 'pointer',
+                          bgcolor: 'transparent',
+                          lineHeight: 0,
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={viewingPhotoUrls[photo.path]}
+                          alt={photo.name}
+                          sx={{ width: 96, height: 96, objectFit: 'cover', display: 'block' }}
+                        />
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+            </Stack>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={lightboxPath !== null} onClose={() => setLightboxPath(null)} maxWidth="lg">
+        <DialogContent
+          sx={{ p: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', bgcolor: 'common.black' }}
+        >
+          {lightboxPath && (
+            <Box
+              component="img"
+              src={viewingPhotoUrls[lightboxPath]}
+              alt=""
+              sx={{ maxWidth: '100%', maxHeight: '80vh', display: 'block' }}
+            />
+          )}
+        </DialogContent>
       </Dialog>
 
       <Divider sx={{ my: 3 }} />
