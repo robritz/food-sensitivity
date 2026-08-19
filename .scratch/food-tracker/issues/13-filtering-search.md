@@ -4,10 +4,10 @@
 
 **Blocked by:** 12 (Food-grouped browse list)
 
-**Status:** ready-for-agent
+**Status:** done — implemented on `feature/13-filtering-search`, not yet merged
 
-- [ ] Filters exist for status, category, reason, child, location, and date range
-- [ ] Selecting multiple values within one filter type returns results matching any of them (OR)
-- [ ] Combining filters across types narrows results to matching all of them (AND)
-- [ ] Free-text search matches Food name/brand and works alongside active filters
-- [ ] Integration test covering a combined filter + search scenario
+- [x] Filters exist for status, category, reason, child, location, and date range
+- [x] Selecting multiple values within one filter type returns results matching any of them (OR)
+- [x] Combining filters across types narrows results to matching all of them (AND)
+- [x] Free-text search matches Food name/brand and works alongside active filters
+- [x] Integration test covering a combined filter + search scenario

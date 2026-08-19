@@ -1,6 +1,7 @@
 import { getCurrentCaregiver } from "./auth.js";
 import type { DataAccessClient } from "./client.js";
 import type { Tables, TablesUpdate } from "./database.types.js";
+import { filterLogEntries, type ActiveFilters, type LogEntryWithFood } from "./filtering.js";
 
 export type LogEntryStatus = "liked" | "disliked" | "inconsistent";
 
@@ -237,30 +238,64 @@ export interface FoodStatusSummary {
   createdAt: string;
 }
 
+export interface ListFoodStatusSummaryOptions {
+  /** Ticket 13's active filter selection -- OR within a filter type, AND
+   * across types (see `ActiveFilters`). Omitted/empty means unfiltered. */
+  filters?: ActiveFilters;
+  /** Free-text search against Food name/brand, combined with `filters` as
+   * AND (both must pass). Case-insensitive substring match. */
+  search?: string;
+}
+
 /** Lists the most recent status for every (Food, Child) pair the caller's
  * household has logged an entry for -- the "one row per Food per child"
- * view the browse list (ticket 12) renders. Groups client-side rather than
- * via a DB view: entries are already ordered most-recent-first by RLS-scoped
- * query, so the first row seen per (food_id, child_id) pair is its latest;
+ * view the browse list (ticket 12) renders, optionally narrowed by ticket
+ * 13's filters/search. Groups client-side rather than via a DB view: entries
+ * are already ordered most-recent-first by RLS-scoped query, so the first
+ * (filter-matching) row seen per (food_id, child_id) pair is its latest;
  * cheap and avoids a migration for what's a straightforward reduction over
- * data the household's RLS policy already scopes for us. */
-export async function listFoodStatusSummary(client: DataAccessClient): Promise<FoodStatusSummary[]> {
+ * data the household's RLS policy already scopes for us.
+ *
+ * Filtering/searching happens over full entries (via `filterLogEntries`)
+ * *before* the per-pair reduction, so a pair only appears if it has at least
+ * one entry matching every active filter type and the search text -- and the
+ * status shown is that of its most recent *matching* entry, not necessarily
+ * its most recent entry overall. */
+export async function listFoodStatusSummary(
+  client: DataAccessClient,
+  options?: ListFoodStatusSummaryOptions,
+): Promise<FoodStatusSummary[]> {
   const { data, error } = await client
     .from("log_entry")
-    .select("id, food_id, child_id, status, created_at")
+    .select(
+      "id, household_id, food_id, child_id, status, notes, intensity, occurred_at, location_id, created_by, created_at, log_entry_reason_tag(reason_tag_id), food(id, name, category_id)",
+    )
     .order("created_at", { ascending: false });
   if (error) throw error;
 
+  const entriesWithFood: LogEntryWithFood[] = data.map((row) => ({
+    entry: toLogEntry(
+      row,
+      row.log_entry_reason_tag.map((tag) => tag.reason_tag_id),
+    ),
+    food: { id: row.food.id, name: row.food.name, categoryId: row.food.category_id },
+  }));
+
+  const matching =
+    options?.filters || options?.search
+      ? filterLogEntries(entriesWithFood, options?.filters ?? {}, options?.search)
+      : entriesWithFood;
+
   const latestByPair = new Map<string, FoodStatusSummary>();
-  for (const row of data) {
-    const key = `${row.food_id}:${row.child_id}`;
-    if (latestByPair.has(key)) continue; // already saw a more recent row for this pair
+  for (const { entry } of matching) {
+    const key = `${entry.foodId}:${entry.childId}`;
+    if (latestByPair.has(key)) continue; // already saw a more recent matching row for this pair
     latestByPair.set(key, {
-      foodId: row.food_id,
-      childId: row.child_id,
-      latestEntryId: row.id,
-      status: row.status as LogEntryStatus,
-      createdAt: row.created_at,
+      foodId: entry.foodId,
+      childId: entry.childId,
+      latestEntryId: entry.id,
+      status: entry.status,
+      createdAt: entry.createdAt,
     });
   }
   return Array.from(latestByPair.values());

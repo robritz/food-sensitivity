@@ -1,35 +1,48 @@
 import {
+  listCategories,
   listChildren,
   listFoodStatusSummary,
   listFoods,
+  listLocations,
   listLogEntries,
   listReasonTags,
+  type ActiveFilters,
+  type Category,
   type Child,
   type Food,
   type FoodStatusSummary,
+  type Location,
   type LogEntry,
   type LogEntryStatus,
   type ReasonTag,
 } from '@food-tracker/data-access'
 import {
   Alert,
+  Autocomplete,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
+  Grid,
   IconButton,
   List,
   ListItem,
   ListItemButton,
   ListItemText,
+  TextField,
   Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+
+const SEARCH_DEBOUNCE_MS = 250
+
+const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
 function statusLabel(status: LogEntryStatus): string {
   return status[0].toUpperCase() + status.slice(1)
@@ -44,17 +57,77 @@ interface SelectedPair {
   childId: string
 }
 
-/** One row per Food/Child pair (ticket 12) -- the browse screen. Reads
- * `listFoodStatusSummary` for the row list and lazily loads a pair's full
- * history via `listLogEntries({ foodId, childId })` only once its row is
- * tapped, rather than fetching every history up front. */
+interface FilterOption {
+  id: string
+  name: string
+}
+
+/** One multi-select filter field (ticket 13): selecting several values within
+ * a field is OR'd together server-side by `filterLogEntries` -- this just
+ * collects the chosen ids and reports them up. Shared across all five
+ * multi-select filter types (status/category/reason/child/location) rather
+ * than five near-identical components. */
+function MultiSelectFilter({
+  label,
+  options,
+  selectedIds,
+  onChange,
+}: {
+  label: string
+  options: FilterOption[]
+  selectedIds: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const value = options.filter((option) => selectedIds.includes(option.id))
+  return (
+    <Autocomplete
+      multiple
+      size="small"
+      options={options}
+      value={value}
+      getOptionLabel={(option) => option.name}
+      isOptionEqualToValue={(option, val) => option.id === val.id}
+      onChange={(_event, newValue) => onChange(newValue.map((option) => option.id))}
+      renderInput={(params) => <TextField {...params} label={label} />}
+      renderValue={(selectedOptions, getItemProps) =>
+        selectedOptions.map((option, index) => (
+          <Chip size="small" label={option.name} {...getItemProps({ index })} key={option.id} />
+        ))
+      }
+    />
+  )
+}
+
+/** One row per Food/Child pair (ticket 12) -- the browse screen. Filterable by
+ * status, category, reason, child, location, and date range, plus free-text
+ * search on Food name/brand (ticket 13): multiple values within one filter
+ * type combine as OR, different filter types (and search) combine as AND --
+ * see `filterLogEntries`/`listFoodStatusSummary` in data-access for the
+ * matching logic. Reads `listFoodStatusSummary` for the row list and lazily
+ * loads a pair's full history via `listLogEntries({ foodId, childId })` only
+ * once its row is tapped, rather than fetching every history up front. */
 export function BrowsePage() {
   const [children, setChildren] = useState<Child[]>([])
   const [foods, setFoods] = useState<Food[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [reasonTags, setReasonTags] = useState<ReasonTag[]>([])
-  const [summary, setSummary] = useState<FoodStatusSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  const [locations, setLocations] = useState<Location[]>([])
+  const [baseLoading, setBaseLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const [summary, setSummary] = useState<FoodStatusSummary[]>([])
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([])
+  const [reasonFilter, setReasonFilter] = useState<string[]>([])
+  const [childFilter, setChildFilter] = useState<string[]>([])
+  const [locationFilter, setLocationFilter] = useState<string[]>([])
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
 
   const [selected, setSelected] = useState<SelectedPair | null>(null)
   const [history, setHistory] = useState<LogEntry[]>([])
@@ -63,24 +136,74 @@ export function BrowsePage() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([listChildren(dataAccessClient), listFoods(dataAccessClient), listReasonTags(dataAccessClient), listFoodStatusSummary(dataAccessClient)])
-      .then(([childrenResult, foodsResult, reasonTagsResult, summaryResult]) => {
+    Promise.all([
+      listChildren(dataAccessClient),
+      listFoods(dataAccessClient),
+      listCategories(dataAccessClient),
+      listReasonTags(dataAccessClient),
+      listLocations(dataAccessClient),
+    ])
+      .then(([childrenResult, foodsResult, categoriesResult, reasonTagsResult, locationsResult]) => {
         if (cancelled) return
         setChildren(childrenResult)
         setFoods(foodsResult)
+        setCategories(categoriesResult)
         setReasonTags(reasonTagsResult)
-        setSummary(summaryResult)
+        setLocations(locationsResult)
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load the food list.')
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setBaseLoading(false)
       })
     return () => {
       cancelled = true
     }
   }, [])
+
+  // Debounces the search text (like the food typeahead in LogPage) so typing
+  // doesn't fire a query per keystroke -- multi-select filter changes below
+  // are discrete clicks, so they refetch immediately.
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timeoutId)
+  }, [searchInput])
+
+  // `dateTo` is a plain yyyy-mm-dd from the date input; bump it to the end of
+  // that day so the range is inclusive of everything logged on that date, not
+  // just entries at exactly midnight.
+  const activeFilters: ActiveFilters = useMemo(
+    () => ({
+      statuses: statusFilter.length > 0 ? (statusFilter as LogEntryStatus[]) : undefined,
+      categoryIds: categoryFilter.length > 0 ? categoryFilter : undefined,
+      reasonTagIds: reasonFilter.length > 0 ? reasonFilter : undefined,
+      childIds: childFilter.length > 0 ? childFilter : undefined,
+      locationIds: locationFilter.length > 0 ? locationFilter : undefined,
+      occurredFrom: dateFrom || undefined,
+      occurredTo: dateTo ? `${dateTo}T23:59:59.999Z` : undefined,
+    }),
+    [statusFilter, categoryFilter, reasonFilter, childFilter, locationFilter, dateFrom, dateTo],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    setSummaryLoading(true)
+    setSummaryError(null)
+    listFoodStatusSummary(dataAccessClient, { filters: activeFilters, search: debouncedSearch })
+      .then((result) => {
+        if (!cancelled) setSummary(result)
+      })
+      .catch((err) => {
+        if (!cancelled) setSummaryError(err instanceof Error ? err.message : 'Could not load the food list.')
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeFilters, debouncedSearch])
 
   useEffect(() => {
     if (!selected) return
@@ -106,6 +229,27 @@ export function BrowsePage() {
     return ids.map((id) => nameById(reasonTags, id)).join(', ')
   }
 
+  function clearFilters() {
+    setStatusFilter([])
+    setCategoryFilter([])
+    setReasonFilter([])
+    setChildFilter([])
+    setLocationFilter([])
+    setDateFrom('')
+    setDateTo('')
+    setSearchInput('')
+  }
+
+  const hasActiveFilters =
+    statusFilter.length > 0 ||
+    categoryFilter.length > 0 ||
+    reasonFilter.length > 0 ||
+    childFilter.length > 0 ||
+    locationFilter.length > 0 ||
+    dateFrom !== '' ||
+    dateTo !== '' ||
+    searchInput.trim() !== ''
+
   // Sorted by Food name, then Child name, so the list reads predictably
   // rather than in arbitrary most-recently-logged order.
   const sortedRows = [...summary].sort((a, b) => {
@@ -114,7 +258,7 @@ export function BrowsePage() {
     return nameById(children, a.childId).localeCompare(nameById(children, b.childId))
   })
 
-  if (loading) {
+  if (baseLoading) {
     return (
       <AppLayout title="Browse foods">
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -137,27 +281,105 @@ export function BrowsePage() {
   return (
     <AppLayout title="Browse foods">
       <Typography variant="h6" component="h2" gutterBottom>
+        Filters
+      </Typography>
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <TextField
+            size="small"
+            fullWidth
+            label="Search food name/brand"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <MultiSelectFilter
+            label="Status"
+            options={STATUSES.map((status) => ({ id: status, name: statusLabel(status) }))}
+            selectedIds={statusFilter}
+            onChange={setStatusFilter}
+          />
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <MultiSelectFilter label="Category" options={categories} selectedIds={categoryFilter} onChange={setCategoryFilter} />
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <MultiSelectFilter label="Reason" options={reasonTags} selectedIds={reasonFilter} onChange={setReasonFilter} />
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <MultiSelectFilter label="Child" options={children} selectedIds={childFilter} onChange={setChildFilter} />
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+          <MultiSelectFilter label="Location" options={locations} selectedIds={locationFilter} onChange={setLocationFilter} />
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3, md: 2 }}>
+          <TextField
+            size="small"
+            fullWidth
+            label="From"
+            type="date"
+            value={dateFrom}
+            onChange={(event) => setDateFrom(event.target.value)}
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3, md: 2 }}>
+          <TextField
+            size="small"
+            fullWidth
+            label="To"
+            type="date"
+            value={dateTo}
+            onChange={(event) => setDateTo(event.target.value)}
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+        </Grid>
+        {hasActiveFilters && (
+          <Grid size={{ xs: 12 }}>
+            <Button size="small" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </Grid>
+        )}
+      </Grid>
+
+      <Typography variant="h6" component="h2" gutterBottom>
         Foods by child
       </Typography>
-      <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
-        {sortedRows.length === 0 && (
-          <ListItem>
-            <ListItemText primary="No entries logged yet." />
-          </ListItem>
+      {summaryError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {summaryError}
+        </Alert>
+      )}
+      <Box sx={{ position: 'relative' }}>
+        {summaryLoading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
         )}
-        {sortedRows.map((row) => (
-          <ListItemButton
-            key={`${row.foodId}:${row.childId}`}
-            onClick={() => setSelected({ foodId: row.foodId, childId: row.childId })}
-          >
-            <ListItemText
-              primary={`${nameById(foods, row.foodId)} — ${nameById(children, row.childId)}`}
-              secondary="Tap for full history"
-            />
-            <Chip size="small" label={statusLabel(row.status)} />
-          </ListItemButton>
-        ))}
-      </List>
+        {!summaryLoading && !summaryError && (
+          <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+            {sortedRows.length === 0 && (
+              <ListItem>
+                <ListItemText primary={hasActiveFilters ? 'No entries match these filters.' : 'No entries logged yet.'} />
+              </ListItem>
+            )}
+            {sortedRows.map((row) => (
+              <ListItemButton
+                key={`${row.foodId}:${row.childId}`}
+                onClick={() => setSelected({ foodId: row.foodId, childId: row.childId })}
+              >
+                <ListItemText
+                  primary={`${nameById(foods, row.foodId)} — ${nameById(children, row.childId)}`}
+                  secondary="Tap for full history"
+                />
+                <Chip size="small" label={statusLabel(row.status)} />
+              </ListItemButton>
+            ))}
+          </List>
+        )}
+      </Box>
 
       <Dialog open={selected !== null} onClose={() => setSelected(null)} fullWidth maxWidth="sm">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

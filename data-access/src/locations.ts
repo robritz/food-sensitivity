@@ -50,6 +50,16 @@ function toLocation(row: Tables<"location">): Location {
   };
 }
 
+/** Lists every Location captured by the caller's household, for ticket 13's
+ * location filter option list. Relies on RLS (rather than an explicit
+ * household_id filter) to scope the result, the same pattern `listFoods`
+ * uses. */
+export async function listLocations(client: DataAccessClient): Promise<Location[]> {
+  const { data, error } = await client.from("location").select().order("name");
+  if (error) throw error;
+  return data.map(toLocation);
+}
+
 /**
  * Reuses the caller's household's existing Location for a Mapbox place id if
  * one was already captured there, or creates a new one -- the ticket 10
