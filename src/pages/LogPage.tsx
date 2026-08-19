@@ -6,6 +6,7 @@ import {
   addReasonTag,
   deleteLogEntry,
   findOrCreateLocation,
+  forwardGeocode,
   getLogEntryPhotoUrl,
   listCategories,
   listChildren,
@@ -67,6 +68,7 @@ import {
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { debounce } from '../lib/debounce'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 import { filterFoodsOffline } from '../lib/offlineFoodSearch'
@@ -190,6 +192,35 @@ export function LogPage() {
   const [locationStatus, setLocationStatus] = useState<'locating' | 'geocoding' | 'ready' | 'unavailable'>(
     'locating',
   )
+
+  // Forward-geocodes a caregiver-typed custom Place name back into
+  // coordinates (ticket 20), so editing the suggested name doesn't lose the
+  // ability to attach a Location entirely (see the Place TextField's
+  // onChange below). Debounced -- one Mapbox request per pause in typing,
+  // not per keystroke. `forwardGeocodeRequestIdRef` guards against a slower
+  // in-flight lookup resolving after a newer edit has already superseded it.
+  const forwardGeocodeRequestIdRef = useRef(0)
+  const debouncedForwardGeocodeRef = useRef<((query: string, requestId: number) => void) & { cancel: () => void } | null>(
+    null,
+  )
+  if (debouncedForwardGeocodeRef.current === null) {
+    debouncedForwardGeocodeRef.current = debounce((query: string, requestId: number) => {
+      const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
+      if (!token) return
+      forwardGeocode(query, token)
+        .then((match) => {
+          if (forwardGeocodeRequestIdRef.current !== requestId) return
+          if (match) setLocationCoords(match)
+        })
+        .catch(() => {
+          // forwardGeocode already resolves to null on failure -- this is
+          // just a defensive backstop, never expected to fire.
+        })
+    }, 500)
+  }
+  useEffect(() => {
+    return () => debouncedForwardGeocodeRef.current?.cancel()
+  }, [])
 
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null)
   const [editStatus, setEditStatus] = useState<LogEntryStatus>('liked')
@@ -930,7 +961,8 @@ export function LogPage() {
               label="Place"
               value={locationName}
               onChange={(event) => {
-                setLocationName(event.target.value)
+                const value = event.target.value
+                setLocationName(value)
                 // Editing the suggested name means it's no longer that
                 // Mapbox place's confirmed name -- clear the id so
                 // `resolveLocationId`/`buildLocationCapture` treat this as a
@@ -939,6 +971,18 @@ export function LogPage() {
                 // under the original suggestion's mapboxPlaceId.
                 setLocationMapboxPlaceId(null)
                 setLocationCoords(null)
+
+                // Bumping the request id here (not just once the debounce
+                // fires) invalidates any earlier in-flight lookup too, so it
+                // can't clobber this edit's state once it resolves.
+                forwardGeocodeRequestIdRef.current += 1
+                const requestId = forwardGeocodeRequestIdRef.current
+                const trimmed = value.trim()
+                if (trimmed === '') {
+                  debouncedForwardGeocodeRef.current?.cancel()
+                  return
+                }
+                debouncedForwardGeocodeRef.current?.(trimmed, requestId)
               }}
               fullWidth
               slotProps={

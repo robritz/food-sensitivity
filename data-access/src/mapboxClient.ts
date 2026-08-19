@@ -52,3 +52,35 @@ export async function fetchReverseGeocode(
   if (!feature) return null;
   return nameFromMapboxFeature(feature);
 }
+
+export interface ForwardGeocodeMatch {
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * Calls Mapbox's forward geocoding endpoint directly (text -> coordinates) --
+ * the counterpart to `fetchReverseGeocode`, isolated the same way so
+ * `forwardGeocode` (locations.ts)'s fallback-on-failure behavior can be
+ * tested without a live network call.
+ *
+ * Throws on any non-2xx response or network failure -- callers that want
+ * graceful degradation (the UI does) should catch and fall back to leaving
+ * coordinates unset, same as `reverseGeocode` does.
+ */
+export async function fetchForwardGeocode(query: string, token: string): Promise<ForwardGeocodeMatch | null> {
+  const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`);
+  url.searchParams.set("access_token", token);
+  url.searchParams.set("limit", "1");
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Mapbox forward geocoding request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const body = (await response.json()) as { features?: { center?: [number, number] }[] };
+  const feature = body.features?.[0];
+  if (!feature?.center) return null;
+  const [longitude, latitude] = feature.center;
+  return { latitude, longitude };
+}

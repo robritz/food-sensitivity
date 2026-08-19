@@ -1,7 +1,7 @@
 import { getCurrentCaregiver } from "./auth.js";
 import type { DataAccessClient } from "./client.js";
 import type { Tables } from "./database.types.js";
-import { fetchReverseGeocode, type ReverseGeocodeMatch } from "./mapboxClient.js";
+import { fetchForwardGeocode, fetchReverseGeocode, type ForwardGeocodeMatch, type ReverseGeocodeMatch } from "./mapboxClient.js";
 
 export interface Location {
   id: string;
@@ -160,6 +160,23 @@ export async function reverseGeocode(
 ): Promise<ReverseGeocodeMatch | null> {
   try {
     return await fetchReverseGeocode(latitude, longitude, token);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Forward-geocodes caregiver-typed place text into coordinates via Mapbox
+ * (ticket 20), degrading to null (rather than throwing) on any failure -- a
+ * missing/invalid token, no network, no match, or Mapbox being down should
+ * never block entry submission, only leave coordinates unset the same as
+ * today. The actual HTTP call lives in `fetchForwardGeocode`
+ * (mapboxClient.ts), kept separate so that isolated piece can be
+ * unit-tested without a network call.
+ */
+export async function forwardGeocode(query: string, token: string): Promise<ForwardGeocodeMatch | null> {
+  try {
+    return await fetchForwardGeocode(query, token);
   } catch {
     return null;
   }
