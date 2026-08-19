@@ -24,11 +24,13 @@ export type { AddFoodInput, Food } from "./foods.js";
 export {
   addLogEntry,
   addLogEntryPhoto,
+  deleteLogEntry,
   getLogEntryPhotoUrl,
   listFoodStatusSummary,
   listLogEntries,
   listLogEntryPhotos,
   MAX_PHOTOS_PER_LOG_ENTRY,
+  updateLogEntry,
 } from "./logEntries.js";
 export type {
   AddLogEntryInput,
@@ -37,6 +39,7 @@ export type {
   LogEntry,
   LogEntryPhoto,
   LogEntryStatus,
+  UpdateLogEntryInput,
 } from "./logEntries.js";
 export { findOrCreateLocation, reverseGeocode } from "./locations.js";
 export type { FindOrCreateLocationInput, Location } from "./locations.js";

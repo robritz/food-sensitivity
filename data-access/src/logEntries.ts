@@ -1,6 +1,6 @@
 import { getCurrentCaregiver } from "./auth.js";
 import type { DataAccessClient } from "./client.js";
-import type { Tables } from "./database.types.js";
+import type { Tables, TablesUpdate } from "./database.types.js";
 
 export type LogEntryStatus = "liked" | "disliked" | "inconsistent";
 
@@ -45,6 +45,37 @@ export interface AddLogEntryInput {
 
 const MIN_INTENSITY = 1;
 const MAX_INTENSITY = 5;
+
+/**
+ * Editable fields for `updateLogEntry`. Now that tickets 09 (intensity,
+ * backdating, photos) and 10 (location) have landed, `intensity`,
+ * `occurredAt`, and `locationId` join the originally-scoped `status`/
+ * `reasonTagIds`/`notes` -- see the ticket 15 implementation notes for why
+ * this shape was left additive. Photo edits (attach/remove) go through
+ * `addLogEntryPhoto`/storage directly rather than this patch, since photos
+ * aren't columns on `log_entry`.
+ *
+ * `foodId`/`childId` are intentionally excluded -- which Food/Child an
+ * entry belongs to stays fixed; only its content fields are editable.
+ */
+export interface UpdateLogEntryInput {
+  status?: LogEntryStatus;
+  /** If provided, replaces the entry's *entire* set of reason tags (not
+   * merged in) -- mirrors `AddLogEntryInput.reasonTagIds` taking the
+   * complete list. Must be non-empty if provided, same "must say why" rule
+   * as creation. */
+  reasonTagIds?: string[];
+  /** `null` clears existing notes; `undefined` (i.e. omitted) leaves notes
+   * unchanged. */
+  notes?: string | null;
+  /** `null` clears an existing intensity rating; `undefined` leaves it
+   * unchanged. Validated against the same 1-5 range as `addLogEntry`. */
+  intensity?: number | null;
+  /** Backdates/corrects "date happened"; omit to leave unchanged. */
+  occurredAt?: string;
+  /** `null` clears an entry's Location; `undefined` leaves it unchanged. */
+  locationId?: string | null;
+}
 
 // Takes reasonTagIds separately (unlike sibling toX(row) mappers) because
 // they live in the log_entry_reason_tag join table, not on the row itself.
@@ -268,4 +299,98 @@ export async function getLogEntryPhotoUrl(
   const { data, error } = await client.storage.from(ENTRY_PHOTOS_BUCKET).createSignedUrl(path, expiresInSeconds);
   if (error) throw error;
   return data.signedUrl;
+}
+
+/**
+ * Updates an existing LogEntry's editable fields (status, reason tags,
+ * notes). Any caregiver in the entry's household may edit it regardless of
+ * who created it -- RLS scopes the update policy by `household_id` only
+ * (not `created_by`), the same "any member, not just the creator" pattern
+ * as `food`/`child` inserts. A caregiver outside the household matches no
+ * row under RLS, so the trailing `.single()` throws.
+ *
+ * This reverses ticket 06's "append-only by omission" for a *single* entry
+ * -- editing one row never touches any other `log_entry` row, so ticket
+ * 06's cross-entry history (repeated logging for the same Food/Child pair
+ * doesn't overwrite prior entries) is unaffected.
+ */
+export async function updateLogEntry(
+  client: DataAccessClient,
+  entryId: string,
+  input: UpdateLogEntryInput,
+): Promise<LogEntry> {
+  if (input.reasonTagIds && input.reasonTagIds.length === 0) {
+    throw new Error("An entry needs at least one reason tag.");
+  }
+  if (
+    input.intensity !== undefined &&
+    input.intensity !== null &&
+    (input.intensity < MIN_INTENSITY || input.intensity > MAX_INTENSITY)
+  ) {
+    throw new Error(`Intensity must be between ${MIN_INTENSITY} and ${MAX_INTENSITY}.`);
+  }
+
+  const patch: TablesUpdate<"log_entry"> = {};
+  if (input.status !== undefined) patch.status = input.status;
+  if (input.notes !== undefined) patch.notes = input.notes;
+  if (input.intensity !== undefined) patch.intensity = input.intensity;
+  if (input.occurredAt !== undefined) patch.occurred_at = input.occurredAt;
+  if (input.locationId !== undefined) patch.location_id = input.locationId;
+
+  let entryRow: Tables<"log_entry">;
+  if (Object.keys(patch).length > 0) {
+    const { data, error } = await client.from("log_entry").update(patch).eq("id", entryId).select().single();
+    if (error) throw error;
+    entryRow = data;
+  } else {
+    // Nothing on the row itself changed (e.g. only reasonTagIds was given)
+    // -- still need the current row for household_id and the return value.
+    const { data, error } = await client.from("log_entry").select().eq("id", entryId).single();
+    if (error) throw error;
+    entryRow = data;
+  }
+
+  // Reason tags are replaced wholesale: delete the entry's current tag rows,
+  // then insert the new set. Simpler than diffing, and the join table has
+  // no other state to lose.
+  if (input.reasonTagIds) {
+    const { error: deleteError } = await client.from("log_entry_reason_tag").delete().eq("log_entry_id", entryId);
+    if (deleteError) throw deleteError;
+
+    const { error: insertError } = await client.from("log_entry_reason_tag").insert(
+      input.reasonTagIds.map((reasonTagId) => ({
+        household_id: entryRow.household_id,
+        log_entry_id: entryId,
+        reason_tag_id: reasonTagId,
+      })),
+    );
+    if (insertError) throw insertError;
+  }
+
+  const { data: tagRows, error: tagError } = await client
+    .from("log_entry_reason_tag")
+    .select("reason_tag_id")
+    .eq("log_entry_id", entryId);
+  if (tagError) throw tagError;
+
+  return toLogEntry(
+    entryRow,
+    tagRows.map((row) => row.reason_tag_id),
+  );
+}
+
+/**
+ * Deletes an existing LogEntry. Any caregiver in the entry's household may
+ * delete it regardless of who created it, same household-only RLS scoping
+ * as `updateLogEntry`. `log_entry_reason_tag` rows cascade via their FK's
+ * `on delete cascade` (ticket 06), so no separate cleanup call is needed.
+ * Deleting one entry never touches any other `log_entry` row, so ticket
+ * 06's cross-entry history for the rest of that Food's log is unaffected.
+ */
+export async function deleteLogEntry(client: DataAccessClient, entryId: string): Promise<void> {
+  const { data, error } = await client.from("log_entry").delete().eq("id", entryId).select("id");
+  if (error) throw error;
+  if (data.length === 0) {
+    throw new Error("Log entry not found, or you don't have access to it.");
+  }
 }

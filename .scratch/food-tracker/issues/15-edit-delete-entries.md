@@ -4,9 +4,19 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** ready-for-agent
+**Status:** done — implemented on `feature/15-edit-delete-entries`, not yet merged
 
-- [ ] A caregiver can edit any field of an existing entry (status, reasons, notes, intensity, date, photos, location) regardless of who created it
-- [ ] A caregiver can delete an existing entry
-- [ ] Editing/deleting an entry does not affect other entries in that Food's history
-- [ ] Integration test: caregivers outside the household cannot edit/delete its entries
+- [x] A caregiver can edit any field of an existing entry (status, reasons, notes, intensity, date, photos, location) regardless of who created it -- intensity/date/photos/location don't exist on `log_entry` yet (tickets 09/10, running concurrently, not yet merged into this branch's base); status/reasons/notes are editable now, and `updateLogEntry`'s input shape is designed so those fields are a small additive change later (see implementation notes)
+- [x] A caregiver can delete an existing entry
+- [x] Editing/deleting an entry does not affect other entries in that Food's history
+- [x] Integration test: caregivers outside the household cannot edit/delete its entries
+
+**Implementation notes:**
+- New migration `supabase/migrations/20260819100000_edit_delete_log_entries.sql` adds UPDATE and DELETE RLS policies on `log_entry` (scoped to `household_id = current_household_id()`, not `created_by` -- any household member, not just the creator) and a DELETE policy on `log_entry_reason_tag`. Table-level `update`/`delete` grants already existed from ticket 06's migration (it granted all four verbs up front even though only select/insert policies existed then), so only policies were needed. The `log_entry` update policy's `with check` re-verifies `food_id`/`child_id` still belong to the caller's household, mirroring the insert policy, even though the data-access layer never exposes those as editable.
+- New data-access exports (`data-access/src/logEntries.ts`, re-exported from `index.ts`): `updateLogEntry(client, entryId, input: UpdateLogEntryInput)` and `deleteLogEntry(client, entryId)`.
+- `UpdateLogEntryInput` is a partial update shape (`status?`, `reasonTagIds?`, `notes?`) deliberately structured so tickets 09/10's fields (intensity, backdated date, photos, location) can be added as small additive optional properties once those branches merge/rebase onto this one -- no restructuring needed. `foodId`/`childId` are intentionally excluded from the input type; which Food/Child an entry belongs to is not editable.
+- `reasonTagIds`, if provided, replaces the entry's entire tag set (delete all existing `log_entry_reason_tag` rows for the entry, insert the new set) rather than diffing -- same "must say why" non-empty rule as `addLogEntry`. `notes: null` explicitly clears notes; omitting the field leaves it unchanged.
+- Both functions rely on RLS to reject cross-household access: an update/delete against a row RLS doesn't match affects 0 rows, which `updateLogEntry` (via `.single()`) and `deleteLogEntry` (via an explicit empty-result check) both turn into a thrown error.
+- UI: added edit/delete icon buttons to each entry row in the existing chronological list in `src/pages/LogPage.tsx` (ticket 06's list, not ticket 12's forthcoming browse UI, per the ticket's guidance to minimize conflicts with concurrent sibling tickets 09/10/12). Edit opens an MUI `Dialog` pre-filled with status/reasons/notes; delete opens a confirm `Dialog`. No redesign of the page.
+- Integration tests: `data-access/test/logEntries.edit-delete.test.ts`, mirroring `logEntries.core-log-entry.test.ts`'s fixture/cleanup conventions. Covers: editing status/notes/reason-tag-replacement, clearing notes to null, the empty-reasonTagIds rejection, a second caregiver (not the creator) successfully editing/deleting, editing/deleting one entry leaving a sibling entry for the same Food/Child pair untouched, and -- the ticket's explicit ask -- an outsider caregiver's update/delete being rejected (asserted both via `.rejects.toThrow()` and by confirming the row is unchanged via the service-role client).
+- **Not yet verified against a live database.** Per instructions, the local Supabase stack was not started (three sibling agents were running concurrently against the same shared Docker ports/project). The migration SQL and test file were written by careful reading of ticket 06's existing schema/policies/patterns but have not been executed. Before merging: run `cd data-access && npm run supabase:reset && npm run gen:types && npm test` against a live instance to confirm the migration applies cleanly and both the happy-path and outsider-rejection tests pass.
