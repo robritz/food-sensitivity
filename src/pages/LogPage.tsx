@@ -348,9 +348,11 @@ export function LogPage() {
   // rejecting outright if a single selection would exceed the cap.
   function handlePhotoInputChange(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files
+    // Snapshot into a plain array before resetting -- `files` is a live
+    // FileList tied to the input, so clearing `value` below empties it too.
+    const incoming = files ? Array.from(files) : []
     event.target.value = '' // lets picking the same file again re-trigger onChange
-    if (!files || files.length === 0) return
-    const incoming = Array.from(files)
+    if (incoming.length === 0) return
     setEntryPhotos((current) => {
       const room = MAX_PHOTOS_PER_LOG_ENTRY - current.length
       setEntryPhotoError(

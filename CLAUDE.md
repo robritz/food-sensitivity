@@ -1,6 +1,7 @@
 ## Agent skills
 
-When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+- When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+- When creating a new task or parallelizing, always create a new git branch. 
 
 ### Issue tracker
 
