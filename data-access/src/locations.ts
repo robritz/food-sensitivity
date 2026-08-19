@@ -142,6 +142,18 @@ export async function findOrCreateLocation(
   return toLocation(data);
 }
 
+/** Lists every Location in the caller's household -- the map view's (ticket
+ * 14) pin source. Relies on RLS (rather than an explicit household_id
+ * filter) to scope results, the same pattern `listChildren`/`listFoods`
+ * use. Includes Locations with no entries logged against them; callers that
+ * only want "has at least one entry" pins (the map view) filter that via
+ * `buildLocationPins`, which also needs the full entry list regardless. */
+export async function listLocations(client: DataAccessClient): Promise<Location[]> {
+  const { data, error } = await client.from("location").select();
+  if (error) throw error;
+  return data.map(toLocation);
+}
+
 /**
  * Reverse-geocodes a captured GPS coordinate into a suggested place name via
  * Mapbox, degrading to null (rather than throwing) on any failure -- a
