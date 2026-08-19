@@ -1,6 +1,7 @@
 import {
   listCategories,
   listChildren,
+  listFilteredLogEntries,
   listFoodStatusSummary,
   listFoods,
   listLocations,
@@ -32,6 +33,7 @@ import {
   ListItem,
   ListItemButton,
   ListItemText,
+  Stack,
   TextField,
   Typography,
 } from '@mui/material'
@@ -39,6 +41,8 @@ import CloseIcon from '@mui/icons-material/Close'
 import { useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { buildExportRows } from '../lib/export'
+import { exportEntriesAsCsv, exportEntriesAsPdf } from '../lib/exportDownload'
 
 const SEARCH_DEBOUNCE_MS = 250
 
@@ -128,6 +132,9 @@ export function BrowsePage() {
   const [dateTo, setDateTo] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const [selected, setSelected] = useState<SelectedPair | null>(null)
   const [history, setHistory] = useState<LogEntry[]>([])
@@ -250,6 +257,29 @@ export function BrowsePage() {
     dateTo !== '' ||
     searchInput.trim() !== ''
 
+  // Export (ticket 16) reads the same `activeFilters`/`debouncedSearch` the
+  // browse list itself is filtered by, so "export" always means "export
+  // what's currently on screen" -- re-fetches the full (non-deduped) match
+  // set via `listFilteredLogEntries` rather than reusing `summary`, which is
+  // collapsed to one row per Food/Child pair.
+  async function handleExport(format: 'csv' | 'pdf') {
+    setExportError(null)
+    setExporting(format)
+    try {
+      const entries = await listFilteredLogEntries(dataAccessClient, { filters: activeFilters, search: debouncedSearch })
+      const rows = buildExportRows(entries, { foods, children, categories, reasonTags, locations })
+      if (format === 'csv') {
+        exportEntriesAsCsv(rows)
+      } else {
+        await exportEntriesAsPdf(dataAccessClient, rows)
+      }
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Could not export entries.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   // Sorted by Food name, then Child name, so the list reads predictably
   // rather than in arbitrary most-recently-logged order.
   const sortedRows = [...summary].sort((a, b) => {
@@ -343,6 +373,30 @@ export function BrowsePage() {
           </Grid>
         )}
       </Grid>
+
+      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center' }}>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={exporting !== null}
+          onClick={() => handleExport('csv')}
+        >
+          {exporting === 'csv' ? 'Exporting…' : 'Export CSV'}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={exporting !== null}
+          onClick={() => handleExport('pdf')}
+        >
+          {exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}
+        </Button>
+      </Stack>
+      {exportError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {exportError}
+        </Alert>
+      )}
 
       <Typography variant="h6" component="h2" gutterBottom>
         Foods by child
