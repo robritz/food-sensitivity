@@ -4,11 +4,21 @@
 
 **Blocked by:** 06 (Core log entry)
 
-**Status:** ready-for-agent
+**Status:** done — implemented on `feature/10-location-capture`, not yet merged
 
-- [ ] Creating an entry captures the device's current GPS coordinates (with permission)
-- [ ] Coordinates are reverse-geocoded via Mapbox into a suggested place name
-- [ ] The caregiver can edit the suggested name or enter one manually
-- [ ] Logging again at a previously used place (matched by Mapbox place ID) reuses the existing Location record rather than creating a duplicate
-- [ ] Places without a Mapbox match fall back to a custom Location record
-- [ ] Integration test: Locations are scoped to household
+- [x] Creating an entry captures the device's current GPS coordinates (with permission)
+- [x] Coordinates are reverse-geocoded via Mapbox into a suggested place name
+- [x] The caregiver can edit the suggested name or enter one manually
+- [x] Logging again at a previously used place (matched by Mapbox place ID) reuses the existing Location record rather than creating a duplicate
+- [x] Places without a Mapbox match fall back to a custom Location record
+- [x] Integration test: Locations are scoped to household
+
+**Implementation notes:**
+
+- New migration `supabase/migrations/20260819090000_location_capture.sql`: adds a household-scoped `location` table (`name`, `latitude`, `longitude`, nullable `mapbox_place_id`) with select/insert RLS policies matching the `food`/`category` shape. A partial unique index `(household_id, mapbox_place_id) where mapbox_place_id is not null` is the dedup key -- custom Locations (no Mapbox match) have a null place id, so they're excluded from the index and never deduped against each other, per the ticket's stated scope. Adds a nullable `location_id` FK on `log_entry` and replaces its insert policy (same shape as the existing `food_id`/`child_id` checks) so a supplied location must also belong to the caller's household. `data-access/src/database.types.ts` was hand-edited to match (no live DB available in this worktree to run `gen:types` -- see verification note below).
+- New `data-access/src/locations.ts` exports `findOrCreateLocation(client, input)` (the reuse-by-place-id logic: looks up an existing row by `mapbox_place_id` under RLS, falls back to insert, and catches a `23505` unique-violation race by re-selecting rather than surfacing a spurious error) and `reverseGeocode(latitude, longitude, token)` (never throws -- swallows any Mapbox failure and resolves to `null`, so callers always have a safe fallback to manual entry). `findOrCreateLocation` never calls Mapbox itself -- it only needs a `mapboxPlaceId` string that was already resolved at capture time, so reuse works even if Mapbox is unreachable at read time, per the ticket's requirement.
+- New `data-access/src/mapboxClient.ts` isolates the actual Mapbox HTTP call (`fetchReverseGeocode`, which throws on failure) and the pure feature-name-picking logic (`nameFromMapboxFeature`, preferring the short `text` field over the full `place_name`) from the fallback/degrade behavior in `reverseGeocode` -- mirrors how `client.ts` isolates Supabase client construction. Both are exported from `data-access/src/index.ts` along with the `Location`/`FindOrCreateLocationInput`/`ReverseGeocodeMatch` types.
+- `addLogEntry`/`AddLogEntryInput`/`LogEntry` (`data-access/src/logEntries.ts`) gained an optional `locationId` in, `locationId` out.
+- `src/pages/LogPage.tsx`: on mount, calls `navigator.geolocation.getCurrentPosition` once per page visit (not re-requested per entry -- a caregiver logging several entries in one sitting is almost always still in the same place) and, if granted, reverse-geocodes via a `VITE_MAPBOX_TOKEN` read from `import.meta.env`. The suggested name populates an editable "Place" `TextField`; clearing it or having no coordinates simply omits the location from the entry (never blocks submission). `resolveLocationId()` calls `findOrCreateLocation` at submit time, following the same "resolve id, fall into the entry payload" pattern as `resolveFoodId`/`resolveCategoryId`.
+- **User action needed:** added `VITE_MAPBOX_TOKEN=` (blank) to both `.env.local.example` and this worktree's `.env.local` -- you need to supply a real Mapbox access token (https://account.mapbox.com/access-tokens/) in `.env.local` for reverse geocoding to actually run. Without it, `reverseGeocode` is skipped and every capture falls back to manual place-name entry (coordinates are still captured and a custom Location is still created if the caregiver types a name) -- the app doesn't break, it just never gets a Mapbox suggestion.
+- **Not yet run against a live DB:** the migration and `data-access/test/locations.household-scoping.test.ts` (reuse-by-place-id, household scoping/visibility, cross-household insert/log-entry rejection) were written by careful reading of the existing `catalog`/`logEntries` test patterns but not executed -- this worktree was told not to run `supabase:start`/`reset`/`npm test` inside `data-access` since three sibling agents share the same local Supabase instance concurrently. Also wrote `data-access/test/mapboxClient.test.ts`, a fetch-mocked unit test for `fetchReverseGeocode`/`nameFromMapboxFeature` that needs no live Supabase -- also not executed, out of caution, since running it means invoking data-access's vitest runner. Before merging: run `cd data-access && npm run supabase:reset && npm run gen:types` (to regenerate `database.types.ts` for real and confirm the migration applies cleanly), then `npm test`, and diff the regenerated types against the hand-edit above.

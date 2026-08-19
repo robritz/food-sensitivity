@@ -18,6 +18,9 @@ export interface LogEntry {
    * past date (backdating), unlike createdAt which always reflects when the
    * row was inserted. */
   occurredAt: string;
+  /** Null for entries logged without a captured/confirmed location (e.g.
+   * geolocation permission denied, or from before ticket 10). */
+  locationId: string | null;
   createdBy: string;
   createdAt: string;
 }
@@ -35,6 +38,9 @@ export interface AddLogEntryInput {
   /** Defaults to now() (via the column default) when omitted -- pass an
    * earlier ISO timestamp to backdate "date happened". */
   occurredAt?: string;
+  /** Id of a Location resolved via `findOrCreateLocation` (ticket 10).
+   * Omitted when geolocation wasn't available/granted or capture failed. */
+  locationId?: string;
 }
 
 const MIN_INTENSITY = 1;
@@ -53,6 +59,7 @@ function toLogEntry(row: Tables<"log_entry">, reasonTagIds: string[]): LogEntry 
     notes: row.notes,
     intensity: row.intensity,
     occurredAt: row.occurred_at,
+    locationId: row.location_id,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -91,6 +98,7 @@ export async function addLogEntry(client: DataAccessClient, input: AddLogEntryIn
       notes: input.notes ?? null,
       intensity: input.intensity ?? null,
       occurred_at: input.occurredAt,
+      location_id: input.locationId ?? null,
       created_by: identity.caregiverId,
     })
     .select()

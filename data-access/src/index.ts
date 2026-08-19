@@ -38,3 +38,6 @@ export type {
   LogEntryPhoto,
   LogEntryStatus,
 } from "./logEntries.js";
+export { findOrCreateLocation, reverseGeocode } from "./locations.js";
+export type { FindOrCreateLocationInput, Location } from "./locations.js";
+export type { ReverseGeocodeMatch } from "./mapboxClient.js";
