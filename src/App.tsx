@@ -8,6 +8,7 @@ import { HomePage } from './pages/HomePage'
 import { InviteCaregiverPage } from './pages/InviteCaregiverPage'
 import { LogPage } from './pages/LogPage'
 import { LoginPage } from './pages/LoginPage'
+import { MapPage } from './pages/MapPage'
 import { SignupPage } from './pages/SignupPage'
 
 function App() {
@@ -51,6 +52,14 @@ function App() {
           element={
             <RequireAuth>
               <BrowsePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/map"
+          element={
+            <RequireAuth>
+              <MapPage />
             </RequireAuth>
           }
         />

@@ -50,15 +50,18 @@ function toLocation(row: Tables<"location">): Location {
   };
 }
 
-/** Lists every Location captured by the caller's household, for ticket 13's
- * location filter option list. Relies on RLS (rather than an explicit
- * household_id filter) to scope the result, the same pattern `listFoods`
- * uses. */
+/** Lists every Location in the caller's household -- the map view's (ticket
+ * 14) pin source. Relies on RLS (rather than an explicit household_id
+ * filter) to scope results, the same pattern `listChildren`/`listFoods`
+ * use. Includes Locations with no entries logged against them; callers that
+ * only want "has at least one entry" pins (the map view) filter that via
+ * `buildLocationPins`, which also needs the full entry list regardless. */
 export async function listLocations(client: DataAccessClient): Promise<Location[]> {
-  const { data, error } = await client.from("location").select().order("name");
+  const { data, error } = await client.from("location").select();
   if (error) throw error;
   return data.map(toLocation);
 }
+
 
 /**
  * Reuses the caller's household's existing Location for a Mapbox place id if
