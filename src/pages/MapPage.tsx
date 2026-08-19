@@ -10,7 +10,6 @@ import {
   type LocationPin,
   type LogEntry,
   type LogEntryStatus,
-  type PinColor,
 } from '@food-tracker/data-access'
 import CloseIcon from '@mui/icons-material/Close'
 import {
@@ -27,30 +26,21 @@ import {
   ListItemText,
   Typography,
 } from '@mui/material'
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
-import { buildStaticMapUrl, computeMapView, projectPoint, type StaticMapPin } from '../lib/staticMap'
+import { isWithinMiles, type LatLng } from '../lib/geoDistance'
+import { PIN_HEX } from '../lib/pinColors'
 
-const MAP_WIDTH = 600
+// Lazy-loaded: `mapbox-gl` is a sizeable dependency (~1MB) that only the Map
+// page needs -- code-splitting it out keeps it off every other page's bundle
+// and out of the PWA precache's default 2MB-per-file limit.
+const InteractiveMap = lazy(() => import('../components/InteractiveMap').then((m) => ({ default: m.InteractiveMap })))
+
 const MAP_HEIGHT = 400
-// Single shared instance -- `view` (computeMapView) and the overlay button
-// positions (projectPoint) must agree on the exact same viewport as the
-// static image URL (buildStaticMapUrl), or pins drift off their markers.
-const VIEWPORT = { width: MAP_WIDTH, height: MAP_HEIGHT }
-/** Diameter (px) of the tappable overlay circle centered on each pin --
- * bigger than the rendered marker glyph itself so it's still an easy tap
- * target on a phone. */
-const PIN_HIT_SIZE = 36
-
-// Same red/yellow/green vocabulary as `buildLocationPins`' `PinColor` --
-// kept here (rather than exported from data-access) since actual hex values
-// are a presentation concern, not a domain one.
-const PIN_HEX: Record<PinColor, string> = {
-  red: 'ef4444',
-  yellow: 'eab308',
-  green: '22c55e',
-}
+/** Ticket 19: map (and the location list under it) only shows Locations
+ * within this many miles of the caregiver's current position, once known. */
+const NEARBY_RADIUS_MILES = 20
 
 function statusLabel(status: LogEntryStatus): string {
   return status[0].toUpperCase() + status.slice(1)
@@ -61,10 +51,12 @@ function nameById(list: { id: string; name: string }[], id: string): string {
 }
 
 /** Loads every Location the household has logged food at plus every logged
- * entry, and renders one map pin per Location (ticket 14) -- color-coded by
+ * entry, and renders one map pin per Location (ticket 14, made interactive
+ * in ticket 18 via `../components/InteractiveMap`) -- color-coded by
  * `buildLocationPins`' status-mix rule, tap-to-open showing the foods/entries
- * logged there. See `../lib/staticMap.ts` for why this is a static image
- * with an overlay rather than an interactive map widget. */
+ * logged there. Scoped to Locations within `NEARBY_RADIUS_MILES` of the
+ * caregiver's current position when available (ticket 19); falls back to
+ * every logged Location otherwise. */
 export function MapPage() {
   const [locations, setLocations] = useState<Location[]>([])
   const [entries, setEntries] = useState<LogEntry[]>([])
@@ -73,6 +65,30 @@ export function MapPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedPin, setSelectedPin] = useState<LocationPin | null>(null)
+  const [userLocation, setUserLocation] = useState<LatLng | null>(null)
+
+  // Captures the caregiver's current position once per page visit so the map
+  // (and the list below it) can be scoped to nearby Locations (ticket 19).
+  // Degrades the same way ticket 10's capture does: no geolocation support
+  // or a denied/failed request just leaves `userLocation` null, which falls
+  // back to showing every logged Location unfiltered rather than blocking
+  // the page.
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    let cancelled = false
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (cancelled) return
+        setUserLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude })
+      },
+      () => {
+        // Denied or unavailable -- `userLocation` stays null.
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -100,21 +116,13 @@ export function MapPage() {
     }
   }, [])
 
-  const pins = useMemo(() => buildLocationPins(locations, entries), [locations, entries])
+  const allPins = useMemo(() => buildLocationPins(locations, entries), [locations, entries])
+  const pins = useMemo(
+    () => (userLocation ? allPins.filter((pin) => isWithinMiles(userLocation, pin.location, NEARBY_RADIUS_MILES)) : allPins),
+    [allPins, userLocation],
+  )
 
   const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
-
-  const view = useMemo(() => computeMapView(pins.map((pin) => pin.location), VIEWPORT), [pins])
-
-  const staticMapUrl = useMemo(() => {
-    if (!token || pins.length === 0) return null
-    const staticPins: StaticMapPin[] = pins.map((pin) => ({
-      latitude: pin.location.latitude,
-      longitude: pin.location.longitude,
-      colorHex: PIN_HEX[pin.color],
-    }))
-    return buildStaticMapUrl(view, VIEWPORT, staticPins, token)
-  }, [token, pins, view])
 
   if (loading) {
     return (
@@ -135,7 +143,11 @@ export function MapPage() {
 
   return (
     <AppLayout title="Map">
-      {pins.length === 0 && <Alert severity="info">No entries logged with a location yet.</Alert>}
+      {allPins.length === 0 && <Alert severity="info">No entries logged with a location yet.</Alert>}
+
+      {allPins.length > 0 && pins.length === 0 && (
+        <Alert severity="info">No logged locations within {NEARBY_RADIUS_MILES} miles of you.</Alert>
+      )}
 
       {pins.length > 0 && !token && (
         <Alert severity="warning" sx={{ mb: 2 }}>
@@ -143,46 +155,25 @@ export function MapPage() {
         </Alert>
       )}
 
-      {pins.length > 0 && token && staticMapUrl && (
+      {pins.length > 0 && token && (
         <Box
           sx={{
-            position: 'relative',
             width: '100%',
-            maxWidth: MAP_WIDTH,
-            aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
-            mx: 'auto',
+            height: MAP_HEIGHT,
             mb: 2,
             borderRadius: 1,
             overflow: 'hidden',
           }}
         >
-          <Box
-            component="img"
-            src={staticMapUrl}
-            alt="Map of logged locations"
-            sx={{ width: '100%', height: '100%', display: 'block' }}
-          />
-          {pins.map((pin) => {
-            const pixel = projectPoint({ lat: pin.location.latitude, lng: pin.location.longitude }, view, VIEWPORT)
-            return (
-              <IconButton
-                key={pin.location.id}
-                aria-label={`Open ${pin.location.name}`}
-                onClick={() => setSelectedPin(pin)}
-                sx={{
-                  position: 'absolute',
-                  left: `${(pixel.x / MAP_WIDTH) * 100}%`,
-                  // The marker glyph's tip points at the coordinate, so
-                  // shift the hit target up to sit over the tip rather than
-                  // straddling it.
-                  top: `calc(${(pixel.y / MAP_HEIGHT) * 100}% - ${PIN_HIT_SIZE / 2}px)`,
-                  width: PIN_HIT_SIZE,
-                  height: PIN_HIT_SIZE,
-                  transform: 'translate(-50%, -50%)',
-                }}
-              />
-            )
-          })}
+          <Suspense
+            fallback={
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                <CircularProgress />
+              </Box>
+            }
+          >
+            <InteractiveMap pins={pins} token={token} onSelectPin={setSelectedPin} />
+          </Suspense>
         </Box>
       )}
 
@@ -197,7 +188,7 @@ export function MapPage() {
               <Chip
                 size="small"
                 label=" "
-                sx={{ bgcolor: `#${PIN_HEX[pin.color]}`, width: 16, height: 16, mr: 1.5 }}
+                sx={{ bgcolor: PIN_HEX[pin.color], width: 16, height: 16, mr: 1.5 }}
               />
               <ListItemText
                 primary={pin.location.name}

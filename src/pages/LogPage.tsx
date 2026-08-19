@@ -938,6 +938,7 @@ export function LogPage() {
                 // silently discarding the edit for) whatever's already saved
                 // under the original suggestion's mapboxPlaceId.
                 setLocationMapboxPlaceId(null)
+                setLocationCoords(null)
               }}
               fullWidth
               slotProps={
