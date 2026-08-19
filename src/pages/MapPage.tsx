@@ -27,21 +27,16 @@ import {
   ListItemText,
   Typography,
 } from '@mui/material'
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
-import { buildStaticMapUrl, computeMapView, projectPoint, type StaticMapPin } from '../lib/staticMap'
 
-const MAP_WIDTH = 600
+// Lazy-loaded: `mapbox-gl` is a sizeable dependency (~1MB) that only the Map
+// page needs -- code-splitting it out keeps it off every other page's bundle
+// and out of the PWA precache's default 2MB-per-file limit.
+const InteractiveMap = lazy(() => import('../components/InteractiveMap').then((m) => ({ default: m.InteractiveMap })))
+
 const MAP_HEIGHT = 400
-// Single shared instance -- `view` (computeMapView) and the overlay button
-// positions (projectPoint) must agree on the exact same viewport as the
-// static image URL (buildStaticMapUrl), or pins drift off their markers.
-const VIEWPORT = { width: MAP_WIDTH, height: MAP_HEIGHT }
-/** Diameter (px) of the tappable overlay circle centered on each pin --
- * bigger than the rendered marker glyph itself so it's still an easy tap
- * target on a phone. */
-const PIN_HIT_SIZE = 36
 
 // Same red/yellow/green vocabulary as `buildLocationPins`' `PinColor` --
 // kept here (rather than exported from data-access) since actual hex values
@@ -61,10 +56,10 @@ function nameById(list: { id: string; name: string }[], id: string): string {
 }
 
 /** Loads every Location the household has logged food at plus every logged
- * entry, and renders one map pin per Location (ticket 14) -- color-coded by
+ * entry, and renders one map pin per Location (ticket 14, made interactive
+ * in ticket 18 via `../components/InteractiveMap`) -- color-coded by
  * `buildLocationPins`' status-mix rule, tap-to-open showing the foods/entries
- * logged there. See `../lib/staticMap.ts` for why this is a static image
- * with an overlay rather than an interactive map widget. */
+ * logged there. */
 export function MapPage() {
   const [locations, setLocations] = useState<Location[]>([])
   const [entries, setEntries] = useState<LogEntry[]>([])
@@ -104,18 +99,6 @@ export function MapPage() {
 
   const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
 
-  const view = useMemo(() => computeMapView(pins.map((pin) => pin.location), VIEWPORT), [pins])
-
-  const staticMapUrl = useMemo(() => {
-    if (!token || pins.length === 0) return null
-    const staticPins: StaticMapPin[] = pins.map((pin) => ({
-      latitude: pin.location.latitude,
-      longitude: pin.location.longitude,
-      colorHex: PIN_HEX[pin.color],
-    }))
-    return buildStaticMapUrl(view, VIEWPORT, staticPins, token)
-  }, [token, pins, view])
-
   if (loading) {
     return (
       <AppLayout title="Map">
@@ -143,46 +126,25 @@ export function MapPage() {
         </Alert>
       )}
 
-      {pins.length > 0 && token && staticMapUrl && (
+      {pins.length > 0 && token && (
         <Box
           sx={{
-            position: 'relative',
             width: '100%',
-            maxWidth: MAP_WIDTH,
-            aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
-            mx: 'auto',
+            height: MAP_HEIGHT,
             mb: 2,
             borderRadius: 1,
             overflow: 'hidden',
           }}
         >
-          <Box
-            component="img"
-            src={staticMapUrl}
-            alt="Map of logged locations"
-            sx={{ width: '100%', height: '100%', display: 'block' }}
-          />
-          {pins.map((pin) => {
-            const pixel = projectPoint({ lat: pin.location.latitude, lng: pin.location.longitude }, view, VIEWPORT)
-            return (
-              <IconButton
-                key={pin.location.id}
-                aria-label={`Open ${pin.location.name}`}
-                onClick={() => setSelectedPin(pin)}
-                sx={{
-                  position: 'absolute',
-                  left: `${(pixel.x / MAP_WIDTH) * 100}%`,
-                  // The marker glyph's tip points at the coordinate, so
-                  // shift the hit target up to sit over the tip rather than
-                  // straddling it.
-                  top: `calc(${(pixel.y / MAP_HEIGHT) * 100}% - ${PIN_HIT_SIZE / 2}px)`,
-                  width: PIN_HIT_SIZE,
-                  height: PIN_HIT_SIZE,
-                  transform: 'translate(-50%, -50%)',
-                }}
-              />
-            )
-          })}
+          <Suspense
+            fallback={
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                <CircularProgress />
+              </Box>
+            }
+          >
+            <InteractiveMap pins={pins} token={token} onSelectPin={setSelectedPin} />
+          </Suspense>
         </Box>
       )}
 
