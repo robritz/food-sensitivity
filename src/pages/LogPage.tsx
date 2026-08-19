@@ -62,6 +62,7 @@ import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
+import { filterFoodsOffline } from '../lib/offlineFoodSearch'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 
@@ -130,6 +131,12 @@ export function LogPage() {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Tracked via events (not read ad hoc via `navigator.onLine`) so effects
+  // that behave differently online vs. offline -- like the food search below
+  // -- can list it as a dependency and re-run the moment connectivity
+  // changes, instead of only reacting to it lazily on the next keystroke.
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
 
   // Entries created while offline (ticket 11): queued in IndexedDB via
   // `addQueuedEntry`, shown separately below so it's visibly "queued, not
@@ -263,6 +270,21 @@ export function LogPage() {
     }
   }, [])
 
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true)
+    }
+    function handleOffline() {
+      setIsOnline(false)
+    }
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
   // Captures the device's current GPS coordinates once per page visit (with
   // permission) and reverse-geocodes them into a suggested place name via
   // Mapbox (ticket 10). Both steps degrade gracefully: no geolocation
@@ -313,11 +335,22 @@ export function LogPage() {
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
   // been selected and the input still reflects its name.
+  //
+  // Offline (ticket 11 only allows logging against an existing food), there's
+  // no network round-trip to make -- `searchFoods` would just fail silently
+  // and leave the picker with no options. `foods` was already loaded on
+  // mount, so filter that in memory instead, mirroring `searchFoods`' own
+  // case-insensitive substring match.
   useEffect(() => {
     const query = foodPicker.inputValue.trim()
     if (foodPicker.value && foodPicker.value.name === foodPicker.inputValue) return
     if (query === '') {
       setFoodOptions([])
+      return
+    }
+    if (!isOnline) {
+      setFoodOptions(filterFoodsOffline(foods, query))
+      setFoodSearchLoading(false)
       return
     }
     let cancelled = false
@@ -338,7 +371,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [foodPicker.inputValue, foodPicker.value])
+  }, [foodPicker.inputValue, foodPicker.value, foods, isOnline])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
