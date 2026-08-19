@@ -10,7 +10,6 @@ import {
   type LocationPin,
   type LogEntry,
   type LogEntryStatus,
-  type PinColor,
 } from '@food-tracker/data-access'
 import CloseIcon from '@mui/icons-material/Close'
 import {
@@ -30,6 +29,7 @@ import {
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { PIN_HEX } from '../lib/pinColors'
 
 // Lazy-loaded: `mapbox-gl` is a sizeable dependency (~1MB) that only the Map
 // page needs -- code-splitting it out keeps it off every other page's bundle
@@ -37,15 +37,6 @@ import { dataAccessClient } from '../lib/dataAccessClient'
 const InteractiveMap = lazy(() => import('../components/InteractiveMap').then((m) => ({ default: m.InteractiveMap })))
 
 const MAP_HEIGHT = 400
-
-// Same red/yellow/green vocabulary as `buildLocationPins`' `PinColor` --
-// kept here (rather than exported from data-access) since actual hex values
-// are a presentation concern, not a domain one.
-const PIN_HEX: Record<PinColor, string> = {
-  red: 'ef4444',
-  yellow: 'eab308',
-  green: '22c55e',
-}
 
 function statusLabel(status: LogEntryStatus): string {
   return status[0].toUpperCase() + status.slice(1)
@@ -159,7 +150,7 @@ export function MapPage() {
               <Chip
                 size="small"
                 label=" "
-                sx={{ bgcolor: `#${PIN_HEX[pin.color]}`, width: 16, height: 16, mr: 1.5 }}
+                sx={{ bgcolor: PIN_HEX[pin.color], width: 16, height: 16, mr: 1.5 }}
               />
               <ListItemText
                 primary={pin.location.name}

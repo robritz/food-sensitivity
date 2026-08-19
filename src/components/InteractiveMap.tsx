@@ -8,19 +8,11 @@
  * mapbox-gl owns projection/fitting natively, so there's no hand-rolled
  * Web Mercator math to unit test here (unlike `staticMap.ts` before it).
  */
-import type { LocationPin, PinColor } from '@food-tracker/data-access'
+import type { LocationPin } from '@food-tracker/data-access'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useEffect, useRef } from 'react'
-
-// Same red/yellow/green vocabulary as `buildLocationPins`' `PinColor` --
-// kept here (rather than exported from data-access) since actual hex values
-// are a presentation concern, not a domain one.
-const PIN_HEX: Record<PinColor, string> = {
-  red: '#ef4444',
-  yellow: '#eab308',
-  green: '#22c55e',
-}
+import { PIN_HEX } from '../lib/pinColors'
 
 /** Zoom used to center on a single Location -- close enough to be useful
  * without a spread of points to size the view around. */
@@ -72,9 +64,18 @@ export function InteractiveMap({ pins, token, onSelectPin }: InteractiveMapProps
       const el = marker.getElement()
       el.style.cursor = 'pointer'
       el.setAttribute('role', 'button')
+      el.setAttribute('tabindex', '0')
       el.setAttribute('aria-label', `Open ${pin.location.name}`)
       el.addEventListener('click', (event) => {
         event.stopPropagation()
+        onSelectPinRef.current(pin)
+      })
+      // mapbox-gl's marker element is a plain <div>, not a native <button>
+      // like the ticket-14 IconButton overlay it replaces -- Enter/Space
+      // needs a manual handler to keep pins keyboard-operable.
+      el.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
         onSelectPinRef.current(pin)
       })
       return marker
