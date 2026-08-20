@@ -76,6 +76,7 @@ import { sortLogEntryPhotos } from '../lib/entryPhotos'
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 const LOCATION_SEARCH_DEBOUNCE_MS = 400
 const LOCATION_SUGGESTION_LIMIT = 5
+const LOCATION_SEARCH_RADIUS_MILES = 50
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
@@ -258,6 +259,7 @@ export function LogPage() {
     const timeoutId = setTimeout(() => {
       forwardGeocode(query, token, {
         proximity: caregiverPositionRef.current ?? undefined,
+        radiusMiles: LOCATION_SEARCH_RADIUS_MILES,
         limit: LOCATION_SUGGESTION_LIMIT,
         types: 'poi,address',
       })

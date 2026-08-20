@@ -74,6 +74,35 @@ export interface ForwardGeocodeOptions {
   /** Restricts matches to these Mapbox feature types (comma-separated, e.g.
    * "poi,address"). Omit for an unrestricted search. */
   types?: string;
+  /** Hard-restricts matches to within this many miles of `proximity` (unlike
+   * `proximity` alone, which only re-ranks -- a strong text match on the
+   * other side of the country can otherwise still outrank a weaker nearby
+   * one). Sent to Mapbox as a `bbox` around `proximity`. Ignored if
+   * `proximity` isn't set -- there's nothing to restrict around. */
+  radiusMiles?: number;
+}
+
+const MILES_PER_DEGREE_LATITUDE = 69;
+
+/** Approximate lat/lng bounding box `radiusMiles` around `center`, for
+ * Mapbox's `bbox` param. Precision doesn't matter here -- this only needs to
+ * keep "nearby" roughly nearby, not draw an exact circle. */
+function boundingBox(
+  center: { latitude: number; longitude: number },
+  radiusMiles: number,
+): [number, number, number, number] {
+  const latDelta = radiusMiles / MILES_PER_DEGREE_LATITUDE;
+  const milesPerDegreeLongitude = Math.max(
+    MILES_PER_DEGREE_LATITUDE * Math.cos((center.latitude * Math.PI) / 180),
+    1,
+  );
+  const lngDelta = radiusMiles / milesPerDegreeLongitude;
+  return [
+    center.longitude - lngDelta,
+    center.latitude - latDelta,
+    center.longitude + lngDelta,
+    center.latitude + latDelta,
+  ];
 }
 
 /**
@@ -98,6 +127,9 @@ export async function fetchForwardGeocode(
   url.searchParams.set("limit", String(options.limit ?? 1));
   if (options.proximity) {
     url.searchParams.set("proximity", `${options.proximity.longitude},${options.proximity.latitude}`);
+    if (options.radiusMiles) {
+      url.searchParams.set("bbox", boundingBox(options.proximity, options.radiusMiles).join(","));
+    }
   }
   if (options.types) {
     url.searchParams.set("types", options.types);
