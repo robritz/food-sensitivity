@@ -1,5 +1,7 @@
 # 21 — Location typeahead: nearby address suggestions while typing
 
+**Superseded by [22](./22-search-box-migration.md).** This ticket's implementation was built on Mapbox's classic Geocoding API. Live-testing during 22 found that API's `poi` type returns zero results for every query on this account (not a bug in this ticket's code) -- business-name search never actually worked, only literal address-text matches. 22 migrates the picklist to Mapbox's Search Box API instead. Left below as history of what was tried; superseded, not deleted.
+
 **What to build:** As the caregiver types into the Place field (ticket 10), search Mapbox for matching places biased toward the caregiver's current position and offer them as a picklist, instead of only silently forward-geocoding the typed text in the background (ticket 20).
 
 **Blocked by:** 20 (Forward-geocode custom location entry)

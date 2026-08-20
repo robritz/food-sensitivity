@@ -6,7 +6,6 @@ import {
   addReasonTag,
   deleteLogEntry,
   findOrCreateLocation,
-  forwardGeocode,
   getLogEntryPhotoUrl,
   listCategories,
   listChildren,
@@ -16,8 +15,10 @@ import {
   listLogEntryPhotos,
   listReasonTags,
   MAX_PHOTOS_PER_LOG_ENTRY,
+  retrievePlace,
   reverseGeocode,
   searchFoods,
+  searchPlaces,
   updateLogEntry,
   type Category,
   type Child,
@@ -68,7 +69,6 @@ import {
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
-import { isWithinMiles } from '../lib/geoDistance'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 import { filterFoodsOffline } from '../lib/offlineFoodSearch'
@@ -78,11 +78,6 @@ const FOOD_SEARCH_DEBOUNCE_MS = 250
 const LOCATION_SEARCH_DEBOUNCE_MS = 400
 const LOCATION_SUGGESTION_LIMIT = 5
 const LOCATION_SEARCH_RADIUS_MILES = 5
-// Mapbox's proximity param only re-ranks -- it doesn't exclude distant
-// matches -- so a wider candidate pool than what's actually shown gives the
-// nearby-distance filter below more to work with before falling back to
-// "no results" for a query with few local matches.
-const LOCATION_SEARCH_FETCH_LIMIT = 10
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
@@ -103,12 +98,15 @@ interface NamedOption {
   name: string
 }
 
-/** A Mapbox forward-geocode match (ticket 21), shaped as a `NamedOption` --
+/** A Mapbox Search Box suggestion (ticket 22), shaped as a `NamedOption` --
  * `id` is the Mapbox place id -- so it can drive a `useFreeSoloPicker`
- * Autocomplete the same way `Food`/`Category` do. */
+ * Autocomplete the same way `Food`/`Category` do. `latitude`/`longitude` are
+ * undefined for a freshly-picked suggestion (Search Box's `/suggest` doesn't
+ * return coordinates) until `retrievePlace` resolves them -- the initial
+ * GPS-based suggestion (reverse-geocoded on page load) already has them. */
 interface LocationSuggestion extends NamedOption {
-  latitude: number
-  longitude: number
+  latitude?: number
+  longitude?: number
   /** Full address, for disambiguating same-named suggestions (e.g. two
    * nearby chain locations) in the picklist. */
   placeName?: string
@@ -219,77 +217,116 @@ export function LogPage() {
   // not state: only read inside the search effect below, never rendered.
   const caregiverPositionRef = useRef<{ latitude: number; longitude: number } | null>(null)
 
-  // Place field (tickets 10/20/21): a freeSolo Autocomplete over Mapbox
-  // forward-geocode matches, same `useFreeSoloPicker` pattern as
+  // Place field (tickets 10/20/22): a freeSolo Autocomplete over Mapbox
+  // Search Box suggestions, same `useFreeSoloPicker` pattern as
   // `foodPicker`/`categoryPicker`. `locationPicker.value` is only set when a
   // suggestion was actually picked (including the initial GPS-based
   // suggestion, set directly below) -- that's what makes it eligible for
   // ticket 10's reuse-by-place-id dedup; free-typed text that never matched
   // a picked suggestion keeps `value` null, so `findOrCreateLocation` always
-  // treats it as a new custom Location (ticket 20's rule, preserved).
+  // treats it as a new custom Location (ticket 20's rule, preserved) --
+  // though per ticket 22, unpicked text no longer resolves coordinates at
+  // all (Search Box's `/suggest` doesn't return them), so a custom Location
+  // like that saves with a name but no coordinates.
   const locationPicker = useFreeSoloPicker<LocationSuggestion>()
   const { setValue: setLocationValue, setInputValue: setLocationInputValue } = locationPicker
   const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([])
   const [locationSearchLoading, setLocationSearchLoading] = useState(false)
+  const [locationRetrieveLoading, setLocationRetrieveLoading] = useState(false)
 
-  // Syncs `locationCoords` to whatever suggestion is currently selected --
-  // the initial GPS-based suggestion below, or one picked from the search
-  // effect's dropdown. Free-typed text (no selected value) is handled by the
-  // search effect itself instead, which sets `locationCoords` from its top
-  // match without touching `locationPicker.value` (ticket 20's fallback).
+  // One Mapbox Search Box session per suggest -> retrieve pair (its billing
+  // unit): created lazily the first time a fresh typing burst searches
+  // below, reused across keystrokes within that burst, and cleared back to
+  // null once a pick is retrieved (or the field is emptied) so the next
+  // burst gets a fresh one. A ref, not state -- only read/written inside the
+  // two effects below, never rendered.
+  const locationSearchSessionTokenRef = useRef<string | null>(null)
+
+  // Resolves `locationCoords` for whatever suggestion is currently selected.
+  // The initial GPS-based suggestion (set directly below, from
+  // `reverseGeocode`) already has coordinates -- use them as-is. A
+  // freshly-picked Search Box suggestion doesn't (`/suggest` never returns
+  // them), so retrieve them via `retrievePlace` and patch the picked value
+  // with the result -- that second `setLocationValue` re-triggers this
+  // effect, but now with coordinates present, so it terminates after one
+  // more (no-op) pass. Free-typed text (no selected value) never resolves
+  // coordinates (ticket 22) -- only the search effect below handles that.
   useEffect(() => {
-    if (locationPicker.value) {
-      setLocationCoords({ latitude: locationPicker.value.latitude, longitude: locationPicker.value.longitude })
+    const value = locationPicker.value
+    if (!value) return
+    if (value.latitude !== undefined && value.longitude !== undefined) {
+      setLocationCoords({ latitude: value.latitude, longitude: value.longitude })
+      return
     }
-  }, [locationPicker.value])
+    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
+    const sessionToken = locationSearchSessionTokenRef.current
+    if (!token || !sessionToken) return
+    let cancelled = false
+    setLocationRetrieveLoading(true)
+    retrievePlace(value.id, token, sessionToken)
+      .then((details) => {
+        if (cancelled || locationPicker.value?.id !== value.id) return
+        locationSearchSessionTokenRef.current = null
+        if (details) {
+          setLocationCoords({ latitude: details.latitude, longitude: details.longitude })
+          setLocationValue({
+            ...value,
+            latitude: details.latitude,
+            longitude: details.longitude,
+            placeName: details.placeName ?? value.placeName,
+          })
+        } else {
+          setLocationCoords(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLocationRetrieveLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [locationPicker.value, setLocationValue])
 
-  // Searches Mapbox for places matching the typed text, biased toward the
-  // caregiver's current position, as they edit the Place field away from a
-  // previously-picked suggestion (ticket 21) -- offers a picklist instead of
-  // only silently resolving coordinates in the background (ticket 20, still
-  // preserved below as the fallback for text nothing gets picked from).
-  // Debounced via the same `useEffect` + `setTimeout` + cleanup idiom the
-  // food-search effect above uses, rather than firing a Mapbox request per
-  // keystroke.
+  // Searches Mapbox's Search Box API for places matching the typed text,
+  // biased toward and hard-restricted near the caregiver's current position
+  // (ticket 22 -- the classic Geocoding API ticket 21 originally used has no
+  // business/POI data on this account). Debounced via the same `useEffect` +
+  // `setTimeout` + cleanup idiom the food-search effect above uses, rather
+  // than firing a Mapbox request per keystroke.
   useEffect(() => {
     const query = locationPicker.inputValue.trim()
     if (locationPicker.value && locationPicker.value.name === locationPicker.inputValue) return
     setLocationSuggestions([])
     setLocationCoords(null)
-    if (query === '') return
+    if (query === '') {
+      locationSearchSessionTokenRef.current = null
+      return
+    }
     if (!isOnline) return
     const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
     if (!token) return
+    if (!locationSearchSessionTokenRef.current) {
+      locationSearchSessionTokenRef.current = crypto.randomUUID()
+    }
+    const sessionToken = locationSearchSessionTokenRef.current
     let cancelled = false
     setLocationSearchLoading(true)
     const timeoutId = setTimeout(() => {
-      const position = caregiverPositionRef.current
-      forwardGeocode(query, token, {
-        proximity: position ?? undefined,
-        limit: LOCATION_SEARCH_FETCH_LIMIT,
+      searchPlaces(query, token, sessionToken, {
+        proximity: caregiverPositionRef.current ?? undefined,
+        radiusMiles: LOCATION_SEARCH_RADIUS_MILES,
         types: 'poi,address',
+        limit: LOCATION_SUGGESTION_LIMIT,
       })
-        .then((matches) => {
+        .then((suggestions) => {
           if (cancelled) return
-          // `proximity` above only re-ranks Mapbox's results -- it doesn't
-          // exclude distant ones, so a common query (e.g. a chain name) can
-          // still return matches thousands of miles away. Drop those here
-          // rather than asking Mapbox to hard-filter (its `bbox` param does
-          // that by filtering an already geography-blind candidate set,
-          // which returns zero results for exactly these common queries).
-          const nearby = position
-            ? matches.filter((match) => isWithinMiles(position, match, LOCATION_SEARCH_RADIUS_MILES))
-            : matches
           setLocationSuggestions(
-            nearby.slice(0, LOCATION_SUGGESTION_LIMIT).map((match) => ({
-              id: match.mapboxPlaceId,
-              name: match.name,
-              placeName: match.placeName,
-              latitude: match.latitude,
-              longitude: match.longitude,
+            suggestions.map((suggestion) => ({
+              id: suggestion.mapboxId,
+              name: suggestion.name,
+              placeName: suggestion.placeName,
             })),
           )
-          setLocationCoords(nearby[0] ? { latitude: nearby[0].latitude, longitude: nearby[0].longitude } : null)
         })
         .finally(() => {
           if (!cancelled) setLocationSearchLoading(false)
@@ -1045,7 +1082,7 @@ export function LogPage() {
               freeSolo
               filterOptions={(options) => options}
               options={locationSuggestions}
-              loading={locationStatus === 'geocoding' || locationSearchLoading}
+              loading={locationStatus === 'geocoding' || locationSearchLoading || locationRetrieveLoading}
               {...locationPicker.autocompleteProps}
               renderOption={(props, option) => {
                 const { key, ...optionProps } = props
@@ -1062,11 +1099,13 @@ export function LogPage() {
                   helperText={
                     locationStatus === 'geocoding'
                       ? 'Looking up a name for this place…'
-                      : locationSearchLoading
-                        ? 'Searching nearby places…'
-                        : locationPicker.value
-                          ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
-                          : "Couldn't match a specific place -- pick a suggestion, keep typing, or leave blank to log without a place."
+                      : locationRetrieveLoading
+                        ? 'Getting location details…'
+                        : locationSearchLoading
+                          ? 'Searching nearby places…'
+                          : locationPicker.value
+                            ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
+                            : 'Pick a suggestion to attach a location, or keep typing to log just this name.'
                   }
                 />
               )}
