@@ -77,7 +77,7 @@ import { sortLogEntryPhotos } from '../lib/entryPhotos'
 const FOOD_SEARCH_DEBOUNCE_MS = 250
 const LOCATION_SEARCH_DEBOUNCE_MS = 400
 const LOCATION_SUGGESTION_LIMIT = 5
-const LOCATION_SEARCH_RADIUS_MILES = 50
+const LOCATION_SEARCH_RADIUS_MILES = 5
 // Mapbox's proximity param only re-ranks -- it doesn't exclude distant
 // matches -- so a wider candidate pool than what's actually shown gives the
 // nearby-distance filter below more to work with before falling back to
