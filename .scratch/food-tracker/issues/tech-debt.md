@@ -5,3 +5,4 @@
 **Status:** needs-triage
 
 - [ ] Consider state handling on `LogPage` component (`src/pages/LogPage.tsx`) -- it's grown to ~12 pieces of `useState` across three responsibilities (add-food form, add-entry form, entries list). Worth revisiting once ticket 09 (intensity, backdating, photos) adds more fields to the entry form -- candidate to split into subcomponents or consolidate onto a reducer.
+- [ ] Investigate slow UI on the food log page (`src/pages/LogPage.tsx`).
