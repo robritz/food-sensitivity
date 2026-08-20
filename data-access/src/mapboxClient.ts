@@ -53,34 +53,59 @@ export async function fetchReverseGeocode(
   return nameFromMapboxFeature(feature);
 }
 
-export interface ForwardGeocodeMatch {
+export interface ForwardGeocodeMatch extends ReverseGeocodeMatch {
   latitude: number;
   longitude: number;
 }
 
+export interface ForwardGeocodeOptions {
+  /** Biases -- but does not restrict -- results toward this position, so a
+   * nearby match ranks first among otherwise-similar text matches. Omit for
+   * an unbiased search. */
+  proximity?: { latitude: number; longitude: number };
+  /** Mapbox's own cap is 10. Defaults to 1 (a single best match) for callers
+   * that only want ticket 20's forward-geocode-in-the-background behavior;
+   * pass a higher limit for a caregiver-facing picklist (ticket 21). */
+  limit?: number;
+}
+
 /**
- * Calls Mapbox's forward geocoding endpoint directly (text -> coordinates) --
- * the counterpart to `fetchReverseGeocode`, isolated the same way so
+ * Calls Mapbox's forward geocoding endpoint directly (text -> places) -- the
+ * counterpart to `fetchReverseGeocode`, isolated the same way so
  * `forwardGeocode` (locations.ts)'s fallback-on-failure behavior can be
- * tested without a live network call.
+ * tested without a live network call. Reuses `nameFromMapboxFeature` for each
+ * returned feature, so a match carries the same `mapboxPlaceId`/`name` shape
+ * `fetchReverseGeocode` produces, plural.
  *
  * Throws on any non-2xx response or network failure -- callers that want
  * graceful degradation (the UI does) should catch and fall back to leaving
  * coordinates unset, same as `reverseGeocode` does.
  */
-export async function fetchForwardGeocode(query: string, token: string): Promise<ForwardGeocodeMatch | null> {
+export async function fetchForwardGeocode(
+  query: string,
+  token: string,
+  options: ForwardGeocodeOptions = {},
+): Promise<ForwardGeocodeMatch[]> {
   const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`);
   url.searchParams.set("access_token", token);
-  url.searchParams.set("limit", "1");
+  url.searchParams.set("limit", String(options.limit ?? 1));
+  if (options.proximity) {
+    url.searchParams.set("proximity", `${options.proximity.longitude},${options.proximity.latitude}`);
+  }
 
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Mapbox forward geocoding request failed: ${response.status} ${response.statusText}`);
   }
 
-  const body = (await response.json()) as { features?: { center?: [number, number] }[] };
-  const feature = body.features?.[0];
-  if (!feature?.center) return null;
-  const [longitude, latitude] = feature.center;
-  return { latitude, longitude };
+  const body = (await response.json()) as {
+    features?: { id: string; text?: string; place_name?: string; center?: [number, number] }[];
+  };
+  return (body.features ?? []).flatMap((feature) => {
+    if (!feature.center) return [];
+    const match = nameFromMapboxFeature(feature);
+    if (!match) return [];
+    const [longitude, latitude] = feature.center;
+    return [{ ...match, latitude, longitude }];
+  });
 }

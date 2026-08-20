@@ -50,7 +50,7 @@ export { filterLogEntries } from "./filtering.js";
 export type { ActiveFilters, LogEntryWithFood } from "./filtering.js";
 export { findOrCreateLocation, forwardGeocode, listLocations, reverseGeocode } from "./locations.js";
 export type { FindOrCreateLocationInput, Location } from "./locations.js";
-export type { ForwardGeocodeMatch, ReverseGeocodeMatch } from "./mapboxClient.js";
+export type { ForwardGeocodeMatch, ForwardGeocodeOptions, ReverseGeocodeMatch } from "./mapboxClient.js";
 export { buildLocationPins } from "./mapPins.js";
 export type { LocationPin, PinColor } from "./mapPins.js";
 export { syncQueuedEntries } from "./offlineQueue.js";

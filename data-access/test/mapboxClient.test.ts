@@ -71,24 +71,66 @@ describe("fetchForwardGeocode", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns the first feature's coordinates on a successful match", async () => {
+  it("returns every feature as a named match, defaulting to limit=1 and no proximity bias", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ features: [{ id: "poi.abc", center: [-70.1, 40.2] }] }),
+      json: async () => ({ features: [{ id: "poi.abc", text: "123 Main St", center: [-70.1, 40.2] }] }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchForwardGeocode("123 Main St, Springfield", "test-token");
 
-    expect(result).toEqual({ latitude: 40.2, longitude: -70.1 });
+    expect(result).toEqual([{ mapboxPlaceId: "poi.abc", name: "123 Main St", latitude: 40.2, longitude: -70.1 }]);
     const requestedUrl = fetchMock.mock.calls[0][0] as URL;
     expect(requestedUrl.toString()).toContain(
       `/${encodeURIComponent("123 Main St, Springfield")}.json`,
     );
     expect(requestedUrl.searchParams.get("access_token")).toBe("test-token");
+    expect(requestedUrl.searchParams.get("limit")).toBe("1");
+    expect(requestedUrl.searchParams.has("proximity")).toBe(false);
   });
 
-  it("returns null when Mapbox has no match for the query", async () => {
+  it("requests the given limit and biases toward the given proximity (as longitude,latitude)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchForwardGeocode("Main St", "test-token", {
+      limit: 5,
+      proximity: { latitude: 40.2, longitude: -70.1 },
+    });
+
+    const requestedUrl = fetchMock.mock.calls[0][0] as URL;
+    expect(requestedUrl.searchParams.get("limit")).toBe("5");
+    expect(requestedUrl.searchParams.get("proximity")).toBe("-70.1,40.2");
+  });
+
+  it("returns multiple matches in the order Mapbox returns them, skipping features with no coordinates", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          features: [
+            { id: "poi.a", text: "A Place", center: [-70.1, 40.2] },
+            { id: "poi.no-center", text: "No Coords" },
+            { id: "poi.b", text: "B Place", center: [-70.2, 40.3] },
+          ],
+        }),
+      }),
+    );
+
+    const result = await fetchForwardGeocode("Main St", "test-token", { limit: 5 });
+
+    expect(result).toEqual([
+      { mapboxPlaceId: "poi.a", name: "A Place", latitude: 40.2, longitude: -70.1 },
+      { mapboxPlaceId: "poi.b", name: "B Place", latitude: 40.3, longitude: -70.2 },
+    ]);
+  });
+
+  it("returns an empty array when Mapbox has no match for the query", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, json: async () => ({ features: [] }) }),
@@ -96,7 +138,7 @@ describe("fetchForwardGeocode", () => {
 
     const result = await fetchForwardGeocode("nonsense query", "test-token");
 
-    expect(result).toBeNull();
+    expect(result).toEqual([]);
   });
 
   it("throws on a non-2xx response, leaving fallback behavior to the caller", async () => {

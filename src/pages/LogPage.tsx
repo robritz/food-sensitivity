@@ -68,13 +68,14 @@ import {
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
-import { debounce } from '../lib/debounce'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 import { filterFoodsOffline } from '../lib/offlineFoodSearch'
 import { sortLogEntryPhotos } from '../lib/entryPhotos'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
+const LOCATION_SEARCH_DEBOUNCE_MS = 400
+const LOCATION_SUGGESTION_LIMIT = 5
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
@@ -93,6 +94,14 @@ function statusLabel(status: LogEntryStatus): string {
 interface NamedOption {
   id: string
   name: string
+}
+
+/** A Mapbox forward-geocode match (ticket 21), shaped as a `NamedOption` --
+ * `id` is the Mapbox place id -- so it can drive a `useFreeSoloPicker`
+ * Autocomplete the same way `Food`/`Category` do. */
+interface LocationSuggestion extends NamedOption {
+  latitude: number
+  longitude: number
 }
 
 /** Manages the value/inputValue pair for a freeSolo MUI Autocomplete backed
@@ -185,42 +194,89 @@ export function LogPage() {
   // re-requested per entry, since a caregiver logging several entries in one
   // sitting is almost always still in the same place. `locationCoords` stays
   // null if permission is denied or the device has no geolocation, in which
-  // case entries are simply logged without a place.
+  // case entries are simply logged without a place. Distinct from
+  // `caregiverPositionRef` below: this is *the entry's* Location coordinates
+  // (may end up somewhere the caregiver isn't, once they pick or type a
+  // different place), not the device's raw position.
   const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null)
-  const [locationMapboxPlaceId, setLocationMapboxPlaceId] = useState<string | null>(null)
-  const [locationName, setLocationName] = useState('')
   const [locationStatus, setLocationStatus] = useState<'locating' | 'geocoding' | 'ready' | 'unavailable'>(
     'locating',
   )
+  // The device's raw GPS position, captured once per page visit alongside
+  // `locationCoords` above but never overwritten afterward -- ticket 21's
+  // Mapbox proximity bias needs "where the caregiver actually is" even after
+  // `locationCoords` has moved on to a picked/typed place elsewhere. A ref,
+  // not state: only read inside the search effect below, never rendered.
+  const caregiverPositionRef = useRef<{ latitude: number; longitude: number } | null>(null)
 
-  // Forward-geocodes a caregiver-typed custom Place name back into
-  // coordinates (ticket 20), so editing the suggested name doesn't lose the
-  // ability to attach a Location entirely (see the Place TextField's
-  // onChange below). Debounced -- one Mapbox request per pause in typing,
-  // not per keystroke. `forwardGeocodeRequestIdRef` guards against a slower
-  // in-flight lookup resolving after a newer edit has already superseded it.
-  const forwardGeocodeRequestIdRef = useRef(0)
-  const debouncedForwardGeocodeRef = useRef<((query: string, requestId: number) => void) & { cancel: () => void } | null>(
-    null,
-  )
-  if (debouncedForwardGeocodeRef.current === null) {
-    debouncedForwardGeocodeRef.current = debounce((query: string, requestId: number) => {
-      const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
-      if (!token) return
-      forwardGeocode(query, token)
-        .then((match) => {
-          if (forwardGeocodeRequestIdRef.current !== requestId) return
-          if (match) setLocationCoords(match)
-        })
-        .catch(() => {
-          // forwardGeocode already resolves to null on failure -- this is
-          // just a defensive backstop, never expected to fire.
-        })
-    }, 500)
-  }
+  // Place field (tickets 10/20/21): a freeSolo Autocomplete over Mapbox
+  // forward-geocode matches, same `useFreeSoloPicker` pattern as
+  // `foodPicker`/`categoryPicker`. `locationPicker.value` is only set when a
+  // suggestion was actually picked (including the initial GPS-based
+  // suggestion, set directly below) -- that's what makes it eligible for
+  // ticket 10's reuse-by-place-id dedup; free-typed text that never matched
+  // a picked suggestion keeps `value` null, so `findOrCreateLocation` always
+  // treats it as a new custom Location (ticket 20's rule, preserved).
+  const locationPicker = useFreeSoloPicker<LocationSuggestion>()
+  const { setValue: setLocationValue, setInputValue: setLocationInputValue } = locationPicker
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([])
+  const [locationSearchLoading, setLocationSearchLoading] = useState(false)
+
+  // Syncs `locationCoords` to whatever suggestion is currently selected --
+  // the initial GPS-based suggestion below, or one picked from the search
+  // effect's dropdown. Free-typed text (no selected value) is handled by the
+  // search effect itself instead, which sets `locationCoords` from its top
+  // match without touching `locationPicker.value` (ticket 20's fallback).
   useEffect(() => {
-    return () => debouncedForwardGeocodeRef.current?.cancel()
-  }, [])
+    if (locationPicker.value) {
+      setLocationCoords({ latitude: locationPicker.value.latitude, longitude: locationPicker.value.longitude })
+    }
+  }, [locationPicker.value])
+
+  // Searches Mapbox for places matching the typed text, biased toward the
+  // caregiver's current position, as they edit the Place field away from a
+  // previously-picked suggestion (ticket 21) -- offers a picklist instead of
+  // only silently resolving coordinates in the background (ticket 20, still
+  // preserved below as the fallback for text nothing gets picked from).
+  // Debounced via the same `useEffect` + `setTimeout` + cleanup idiom the
+  // food-search effect above uses, rather than firing a Mapbox request per
+  // keystroke.
+  useEffect(() => {
+    const query = locationPicker.inputValue.trim()
+    if (locationPicker.value && locationPicker.value.name === locationPicker.inputValue) return
+    setLocationSuggestions([])
+    setLocationCoords(null)
+    if (query === '') return
+    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
+    if (!token) return
+    let cancelled = false
+    setLocationSearchLoading(true)
+    const timeoutId = setTimeout(() => {
+      forwardGeocode(query, token, {
+        proximity: caregiverPositionRef.current ?? undefined,
+        limit: LOCATION_SUGGESTION_LIMIT,
+      })
+        .then((matches) => {
+          if (cancelled) return
+          setLocationSuggestions(
+            matches.map((match) => ({
+              id: match.mapboxPlaceId,
+              name: match.name,
+              latitude: match.latitude,
+              longitude: match.longitude,
+            })),
+          )
+          setLocationCoords(matches[0] ? { latitude: matches[0].latitude, longitude: matches[0].longitude } : null)
+        })
+        .finally(() => {
+          if (!cancelled) setLocationSearchLoading(false)
+        })
+    }, LOCATION_SEARCH_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
+  }, [locationPicker.inputValue, locationPicker.value])
 
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null)
   const [editStatus, setEditStatus] = useState<LogEntryStatus>('liked')
@@ -385,6 +441,7 @@ export function LogPage() {
         if (cancelled) return
         const { latitude, longitude } = position.coords
         setLocationCoords({ latitude, longitude })
+        caregiverPositionRef.current = { latitude, longitude }
 
         const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
         if (!token) {
@@ -396,8 +453,8 @@ export function LogPage() {
           .then((match) => {
             if (cancelled) return
             if (match) {
-              setLocationMapboxPlaceId(match.mapboxPlaceId)
-              setLocationName(match.name)
+              setLocationValue({ id: match.mapboxPlaceId, name: match.name, latitude, longitude })
+              setLocationInputValue(match.name)
             }
             setLocationStatus('ready')
           })
@@ -412,7 +469,7 @@ export function LogPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [setLocationValue, setLocationInputValue])
 
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
@@ -550,12 +607,16 @@ export function LogPage() {
   // callers can bail out the same way.
   function resolvedLocationName(): string | undefined {
     if (!locationCoords) return undefined
-    const name = locationName.trim()
+    const name = locationPicker.inputValue.trim()
     return name === '' ? undefined : name
   }
 
   // `findOrCreateLocation` handles reuse -- passing the same mapboxPlaceId
   // again reuses the existing household Location instead of duplicating it.
+  // `locationPicker.value` is only set when a suggestion was actually
+  // picked (ticket 10/21), never from ticket 20's silent forward-geocode
+  // fallback -- so free-typed text that merely happens to resolve to
+  // coordinates still creates a new custom Location, not a dedup reuse.
   async function resolveLocationId(): Promise<string | undefined> {
     const name = resolvedLocationName()
     if (name === undefined || !locationCoords) return undefined
@@ -563,7 +624,7 @@ export function LogPage() {
       name,
       latitude: locationCoords.latitude,
       longitude: locationCoords.longitude,
-      mapboxPlaceId: locationMapboxPlaceId,
+      mapboxPlaceId: locationPicker.value?.id ?? null,
     })
     return location.id
   }
@@ -584,7 +645,7 @@ export function LogPage() {
       name,
       latitude: locationCoords.latitude,
       longitude: locationCoords.longitude,
-      mapboxPlaceId: locationMapboxPlaceId,
+      mapboxPlaceId: locationPicker.value?.id ?? null,
     }
   }
 
@@ -957,46 +1018,27 @@ export function LogPage() {
             </Typography>
           )}
           {(locationStatus === 'geocoding' || locationStatus === 'ready') && (
-            <TextField
-              label="Place"
-              value={locationName}
-              onChange={(event) => {
-                const value = event.target.value
-                setLocationName(value)
-                // Editing the suggested name means it's no longer that
-                // Mapbox place's confirmed name -- clear the id so
-                // `resolveLocationId`/`buildLocationCapture` treat this as a
-                // custom capture (a new Location) instead of reusing (and
-                // silently discarding the edit for) whatever's already saved
-                // under the original suggestion's mapboxPlaceId.
-                setLocationMapboxPlaceId(null)
-                setLocationCoords(null)
-
-                // Bumping the request id here (not just once the debounce
-                // fires) invalidates any earlier in-flight lookup too, so it
-                // can't clobber this edit's state once it resolves.
-                forwardGeocodeRequestIdRef.current += 1
-                const requestId = forwardGeocodeRequestIdRef.current
-                const trimmed = value.trim()
-                if (trimmed === '') {
-                  debouncedForwardGeocodeRef.current?.cancel()
-                  return
-                }
-                debouncedForwardGeocodeRef.current?.(trimmed, requestId)
-              }}
-              fullWidth
-              slotProps={
-                locationStatus === 'geocoding'
-                  ? { input: { endAdornment: <CircularProgress size={16} /> } }
-                  : undefined
-              }
-              helperText={
-                locationStatus === 'geocoding'
-                  ? 'Looking up a name for this place…'
-                  : locationMapboxPlaceId
-                    ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
-                    : "Couldn't suggest a name -- enter one, or leave blank to log without a place."
-              }
+            <Autocomplete
+              freeSolo
+              filterOptions={(options) => options}
+              options={locationSuggestions}
+              loading={locationStatus === 'geocoding' || locationSearchLoading}
+              {...locationPicker.autocompleteProps}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Place"
+                  helperText={
+                    locationStatus === 'geocoding'
+                      ? 'Looking up a name for this place…'
+                      : locationSearchLoading
+                        ? 'Searching nearby places…'
+                        : locationPicker.value
+                          ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
+                          : "Couldn't match a specific place -- pick a suggestion, keep typing, or leave blank to log without a place."
+                  }
+                />
+              )}
             />
           )}
 
