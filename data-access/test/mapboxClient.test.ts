@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchForwardGeocode, fetchReverseGeocode, nameFromMapboxFeature } from "../src/mapboxClient.js";
+import { fetchReverseGeocode, nameFromMapboxFeature } from "../src/mapboxClient.js";
 
 // Pure-logic/fetch-mocked tests for the isolated Mapbox HTTP call -- no
 // Supabase or live network involved, unlike the rest of data-access/test
@@ -63,48 +63,5 @@ describe("fetchReverseGeocode", () => {
     );
 
     await expect(fetchReverseGeocode(0, 0, "bad-token")).rejects.toThrow();
-  });
-});
-
-describe("fetchForwardGeocode", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("returns the first feature's coordinates on a successful match", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ features: [{ id: "poi.abc", center: [-70.1, 40.2] }] }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await fetchForwardGeocode("123 Main St, Springfield", "test-token");
-
-    expect(result).toEqual({ latitude: 40.2, longitude: -70.1 });
-    const requestedUrl = fetchMock.mock.calls[0][0] as URL;
-    expect(requestedUrl.toString()).toContain(
-      `/${encodeURIComponent("123 Main St, Springfield")}.json`,
-    );
-    expect(requestedUrl.searchParams.get("access_token")).toBe("test-token");
-  });
-
-  it("returns null when Mapbox has no match for the query", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ features: [] }) }),
-    );
-
-    const result = await fetchForwardGeocode("nonsense query", "test-token");
-
-    expect(result).toBeNull();
-  });
-
-  it("throws on a non-2xx response, leaving fallback behavior to the caller", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: "Unauthorized" }),
-    );
-
-    await expect(fetchForwardGeocode("123 Main St", "bad-token")).rejects.toThrow();
   });
 });

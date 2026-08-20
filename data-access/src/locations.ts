@@ -1,7 +1,14 @@
 import { getCurrentCaregiver } from "./auth.js";
 import type { DataAccessClient } from "./client.js";
 import type { Tables } from "./database.types.js";
-import { fetchForwardGeocode, fetchReverseGeocode, type ForwardGeocodeMatch, type ReverseGeocodeMatch } from "./mapboxClient.js";
+import { fetchReverseGeocode, type ReverseGeocodeMatch } from "./mapboxClient.js";
+import {
+  fetchPlaceDetails,
+  fetchPlaceSuggestions,
+  type PlaceDetails,
+  type PlaceSuggestion,
+  type PlaceSuggestOptions,
+} from "./mapboxSearchClient.js";
 
 export interface Location {
   id: string;
@@ -166,17 +173,42 @@ export async function reverseGeocode(
 }
 
 /**
- * Forward-geocodes caregiver-typed place text into coordinates via Mapbox
- * (ticket 20), degrading to null (rather than throwing) on any failure -- a
- * missing/invalid token, no network, no match, or Mapbox being down should
- * never block entry submission, only leave coordinates unset the same as
- * today. The actual HTTP call lives in `fetchForwardGeocode`
- * (mapboxClient.ts), kept separate so that isolated piece can be
- * unit-tested without a network call.
+ * Searches Mapbox's Search Box API for places matching caregiver-typed text
+ * (ticket 22, replacing ticket 21's classic-Geocoding-based picklist, which
+ * had no business/POI data on this account), degrading to an empty array
+ * (rather than throwing) on any failure -- a missing/invalid token, no
+ * network, or Mapbox being down should never block entry submission, only
+ * leave the picklist empty. The actual HTTP call lives in
+ * `fetchPlaceSuggestions` (mapboxSearchClient.ts), kept separate so that
+ * isolated piece can be unit-tested without a network call.
  */
-export async function forwardGeocode(query: string, token: string): Promise<ForwardGeocodeMatch | null> {
+export async function searchPlaces(
+  query: string,
+  token: string,
+  sessionToken: string,
+  options: PlaceSuggestOptions = {},
+): Promise<PlaceSuggestion[]> {
   try {
-    return await fetchForwardGeocode(query, token);
+    return await fetchPlaceSuggestions(query, token, sessionToken, options);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolves one `searchPlaces` suggestion to actual coordinates via Search
+ * Box's `/retrieve`, degrading to null (rather than throwing) on any
+ * failure -- same never-blocks-submission contract as the rest of this
+ * module. Must be called with the same `sessionToken` passed to the
+ * `searchPlaces` call that produced `mapboxId`.
+ */
+export async function retrievePlace(
+  mapboxId: string,
+  token: string,
+  sessionToken: string,
+): Promise<PlaceDetails | null> {
+  try {
+    return await fetchPlaceDetails(mapboxId, token, sessionToken);
   } catch {
     return null;
   }
