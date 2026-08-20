@@ -107,44 +107,6 @@ describe("fetchForwardGeocode", () => {
     expect(requestedUrl.searchParams.get("proximity")).toBe("-70.1,40.2");
   });
 
-  it("hard-restricts results to a bbox around proximity when radiusMiles is given", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ features: [] }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await fetchForwardGeocode("Main St", "test-token", {
-      proximity: { latitude: 40, longitude: -70 },
-      radiusMiles: 50,
-    });
-
-    const requestedUrl = fetchMock.mock.calls[0][0] as URL;
-    const bbox = requestedUrl.searchParams.get("bbox")?.split(",").map(Number);
-    expect(bbox).toHaveLength(4);
-    const [minLng, minLat, maxLng, maxLat] = bbox as [number, number, number, number];
-    expect(minLng).toBeLessThan(-70);
-    expect(maxLng).toBeGreaterThan(-70);
-    expect(minLat).toBeLessThan(40);
-    expect(maxLat).toBeGreaterThan(40);
-    // roughly 50 miles -- not an exact circle, just sanity-check the scale
-    expect(maxLat - minLat).toBeCloseTo((2 * 50) / 69, 1);
-  });
-
-  it("omits bbox when radiusMiles is given without proximity, or proximity is given without radiusMiles", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ features: [] }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await fetchForwardGeocode("Main St", "test-token", { radiusMiles: 50 });
-    expect((fetchMock.mock.calls[0][0] as URL).searchParams.has("bbox")).toBe(false);
-
-    await fetchForwardGeocode("Main St", "test-token", { proximity: { latitude: 40, longitude: -70 } });
-    expect((fetchMock.mock.calls[1][0] as URL).searchParams.has("bbox")).toBe(false);
-  });
-
   it("restricts to the given types when provided, and omits the param otherwise", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

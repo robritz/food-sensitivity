@@ -68,6 +68,7 @@ import {
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { isWithinMiles } from '../lib/geoDistance'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
 import { filterFoodsOffline } from '../lib/offlineFoodSearch'
@@ -77,6 +78,11 @@ const FOOD_SEARCH_DEBOUNCE_MS = 250
 const LOCATION_SEARCH_DEBOUNCE_MS = 400
 const LOCATION_SUGGESTION_LIMIT = 5
 const LOCATION_SEARCH_RADIUS_MILES = 50
+// Mapbox's proximity param only re-ranks -- it doesn't exclude distant
+// matches -- so a wider candidate pool than what's actually shown gives the
+// nearby-distance filter below more to work with before falling back to
+// "no results" for a query with few local matches.
+const LOCATION_SEARCH_FETCH_LIMIT = 10
 
 const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
 
@@ -257,16 +263,25 @@ export function LogPage() {
     let cancelled = false
     setLocationSearchLoading(true)
     const timeoutId = setTimeout(() => {
+      const position = caregiverPositionRef.current
       forwardGeocode(query, token, {
-        proximity: caregiverPositionRef.current ?? undefined,
-        radiusMiles: LOCATION_SEARCH_RADIUS_MILES,
-        limit: LOCATION_SUGGESTION_LIMIT,
+        proximity: position ?? undefined,
+        limit: LOCATION_SEARCH_FETCH_LIMIT,
         types: 'poi,address',
       })
         .then((matches) => {
           if (cancelled) return
+          // `proximity` above only re-ranks Mapbox's results -- it doesn't
+          // exclude distant ones, so a common query (e.g. a chain name) can
+          // still return matches thousands of miles away. Drop those here
+          // rather than asking Mapbox to hard-filter (its `bbox` param does
+          // that by filtering an already geography-blind candidate set,
+          // which returns zero results for exactly these common queries).
+          const nearby = position
+            ? matches.filter((match) => isWithinMiles(position, match, LOCATION_SEARCH_RADIUS_MILES))
+            : matches
           setLocationSuggestions(
-            matches.map((match) => ({
+            nearby.slice(0, LOCATION_SUGGESTION_LIMIT).map((match) => ({
               id: match.mapboxPlaceId,
               name: match.name,
               placeName: match.placeName,
@@ -274,7 +289,7 @@ export function LogPage() {
               longitude: match.longitude,
             })),
           )
-          setLocationCoords(matches[0] ? { latitude: matches[0].latitude, longitude: matches[0].longitude } : null)
+          setLocationCoords(nearby[0] ? { latitude: nearby[0].latitude, longitude: nearby[0].longitude } : null)
         })
         .finally(() => {
           if (!cancelled) setLocationSearchLoading(false)
