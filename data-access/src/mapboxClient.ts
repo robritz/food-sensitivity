@@ -56,6 +56,10 @@ export async function fetchReverseGeocode(
 export interface ForwardGeocodeMatch extends ReverseGeocodeMatch {
   latitude: number;
   longitude: number;
+  /** Full "Grandma's House, 123 Main St, Springfield" string, for
+   * disambiguating between same-named matches (e.g. two nearby chain
+   * locations) in a picklist. Undefined if Mapbox didn't return one. */
+  placeName?: string;
 }
 
 export interface ForwardGeocodeOptions {
@@ -67,6 +71,9 @@ export interface ForwardGeocodeOptions {
    * that only want ticket 20's forward-geocode-in-the-background behavior;
    * pass a higher limit for a caregiver-facing picklist (ticket 21). */
   limit?: number;
+  /** Restricts matches to these Mapbox feature types (comma-separated, e.g.
+   * "poi,address"). Omit for an unrestricted search. */
+  types?: string;
 }
 
 /**
@@ -92,6 +99,9 @@ export async function fetchForwardGeocode(
   if (options.proximity) {
     url.searchParams.set("proximity", `${options.proximity.longitude},${options.proximity.latitude}`);
   }
+  if (options.types) {
+    url.searchParams.set("types", options.types);
+  }
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -106,6 +116,6 @@ export async function fetchForwardGeocode(
     const match = nameFromMapboxFeature(feature);
     if (!match) return [];
     const [longitude, latitude] = feature.center;
-    return [{ ...match, latitude, longitude }];
+    return [{ ...match, latitude, longitude, placeName: feature.place_name?.trim() || undefined }];
   });
 }

@@ -107,6 +107,54 @@ describe("fetchForwardGeocode", () => {
     expect(requestedUrl.searchParams.get("proximity")).toBe("-70.1,40.2");
   });
 
+  it("restricts to the given types when provided, and omits the param otherwise", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ features: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchForwardGeocode("Main St", "test-token", { types: "poi,address" });
+
+    const requestedUrl = fetchMock.mock.calls[0][0] as URL;
+    expect(requestedUrl.searchParams.get("types")).toBe("poi,address");
+
+    await fetchForwardGeocode("Main St", "test-token");
+    const requestedUrlWithoutTypes = fetchMock.mock.calls[1][0] as URL;
+    expect(requestedUrlWithoutTypes.searchParams.has("types")).toBe(false);
+  });
+
+  it("includes the full place_name as placeName when Mapbox returns one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          features: [
+            {
+              id: "poi.abc",
+              text: "Subway",
+              place_name: "Subway, 123 Main St, Springfield",
+              center: [-70.1, 40.2],
+            },
+          ],
+        }),
+      }),
+    );
+
+    const result = await fetchForwardGeocode("Subway", "test-token");
+
+    expect(result).toEqual([
+      {
+        mapboxPlaceId: "poi.abc",
+        name: "Subway",
+        placeName: "Subway, 123 Main St, Springfield",
+        latitude: 40.2,
+        longitude: -70.1,
+      },
+    ]);
+  });
+
   it("returns multiple matches in the order Mapbox returns them, skipping features with no coordinates", async () => {
     vi.stubGlobal(
       "fetch",

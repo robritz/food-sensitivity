@@ -102,6 +102,9 @@ interface NamedOption {
 interface LocationSuggestion extends NamedOption {
   latitude: number
   longitude: number
+  /** Full address, for disambiguating same-named suggestions (e.g. two
+   * nearby chain locations) in the picklist. */
+  placeName?: string
 }
 
 /** Manages the value/inputValue pair for a freeSolo MUI Autocomplete backed
@@ -247,6 +250,7 @@ export function LogPage() {
     setLocationSuggestions([])
     setLocationCoords(null)
     if (query === '') return
+    if (!isOnline) return
     const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
     if (!token) return
     let cancelled = false
@@ -255,6 +259,7 @@ export function LogPage() {
       forwardGeocode(query, token, {
         proximity: caregiverPositionRef.current ?? undefined,
         limit: LOCATION_SUGGESTION_LIMIT,
+        types: 'poi,address',
       })
         .then((matches) => {
           if (cancelled) return
@@ -262,6 +267,7 @@ export function LogPage() {
             matches.map((match) => ({
               id: match.mapboxPlaceId,
               name: match.name,
+              placeName: match.placeName,
               latitude: match.latitude,
               longitude: match.longitude,
             })),
@@ -276,7 +282,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [locationPicker.inputValue, locationPicker.value])
+  }, [locationPicker.inputValue, locationPicker.value, isOnline])
 
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null)
   const [editStatus, setEditStatus] = useState<LogEntryStatus>('liked')
@@ -1024,6 +1030,14 @@ export function LogPage() {
               options={locationSuggestions}
               loading={locationStatus === 'geocoding' || locationSearchLoading}
               {...locationPicker.autocompleteProps}
+              renderOption={(props, option) => {
+                const { key, ...optionProps } = props
+                return (
+                  <li key={key} {...optionProps}>
+                    <ListItemText primary={option.name} secondary={option.placeName} />
+                  </li>
+                )
+              }}
               renderInput={(params) => (
                 <TextField
                   {...params}

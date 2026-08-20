@@ -4,13 +4,16 @@
 
 **Blocked by:** 20 (Forward-geocode custom location entry)
 
-**Status:** done -- implemented on `feature/21-location-typeahead-suggestions` (stacked on the unmerged ticket 20 branch)
+**Status:** done -- implemented on `feature/21-location-typeahead-suggestions`, rebased onto `main` (ticket 20 has since merged)
 
 - [x] Typing in the Place field (once it's no longer reflecting a previously-suggested/selected place) searches Mapbox for matching places, debounced -- not one request per keystroke
 - [x] Results are biased toward the caregiver's current GPS position (captured once per page visit, same position ticket 10 already captures) via Mapbox's `proximity` param, so nearby matches rank first
 - [x] Matches are shown as a picklist under the field; selecting one sets the Place field to that match's name, and the saved Location uses that match's coordinates and Mapbox place id (eligible for the ticket 10 reuse-by-place-id dedup, like the initial GPS-based suggestion)
 - [x] The caregiver can still type and submit arbitrary custom text without picking a suggestion -- ticket 20's fallback (silently forward-geocoding the typed text for coordinates, without a place id) is preserved for that case, though the fallback match is now the top result of the same proximity-biased/limit-5 search used for the picklist rather than an unbiased single-best-match lookup (a caregiver typing a name shared by two places will now silently fall back to whichever is closer to them, not whichever Mapbox judges the better text match)
 - [x] No geolocation support/permission, no Mapbox token, no network, or a failed/empty search all degrade to a plain free-text field (no picklist, no proximity bias) -- never blocks entry submission, same as tickets 10/20
+- [x] Results are restricted to Mapbox's `poi` and `address` types, so the picklist surfaces businesses/addresses rather than neighborhoods, postcodes, or regions
+- [x] The search request is skipped entirely while offline (not just left to fail), matching the existing food-search effect's `isOnline` guard
+- [x] Each suggestion shows the full address as a subtitle under its name, so same-named nearby matches (e.g. two locations of the same chain) are distinguishable before picking one
 
 **Implementation notes:**
 
@@ -18,4 +21,6 @@
 - `src/pages/LogPage.tsx`'s Place field is now a `freeSolo` MUI `Autocomplete` via a new `locationPicker = useFreeSoloPicker<LocationSuggestion>()` (the exact same hook `foodPicker`/`categoryPicker` already use; `LocationSuggestion extends NamedOption` with `latitude`/`longitude`, `id` = Mapbox place id). `locationPicker.value` is only ever set when a suggestion was actually picked -- the initial GPS-based reverse-geocode suggestion (ticket 10) now goes through `locationPicker.setValue(...)`/`setInputValue(...)` instead of separate `locationMapboxPlaceId`/`locationName` state, so it's treated identically to an explicitly-picked search result. `mapboxPlaceId` passed to `findOrCreateLocation`/`buildLocationCapture` is derived as `locationPicker.value?.id ?? null` -- free-typed text that resolves via the ticket-20 fallback never sets `locationPicker.value`, so it still creates a new custom Location rather than deduping.
 - The search-as-you-type debounce uses the codebase's existing idiom for this (a `useEffect` keyed on `locationPicker.inputValue`/`locationPicker.value`, with an internal `setTimeout` + cleanup) -- the same shape as the pre-existing food-search effect a few dozen lines above it in the same file -- rather than the standalone `debounce()` utility ticket 20 introduced before this convention was noticed in-repo. That utility (`src/lib/debounce.ts`) and its test are removed as part of this ticket since this was its only call site.
 - `caregiverPositionRef` (a ref, not state -- only read inside the search effect, never rendered) holds the device's raw GPS position captured once per page visit, kept separate from `locationCoords` so proximity bias still reflects "where the caregiver actually is" after `locationCoords` has moved on to a picked or typed place elsewhere.
+- `types: 'poi,address'` is passed only from `LogPage.tsx`'s picklist search call, not from ticket 20's original single-match call site (which stays unrestricted) or from `fetchReverseGeocode` -- keeps the change scoped to the new picklist UX.
+- Each `ForwardGeocodeMatch`/`LocationSuggestion` now also carries an optional `placeName` (Mapbox's full `place_name`, previously discarded), rendered as a `ListItemText` secondary line via a `renderOption` on the Autocomplete.
 - **Not verified in a real browser** -- same tooling/env gap noted on tickets 18-20 (no browser-automation tool this session, `VITE_MAPBOX_TOKEN` unavailable). Typecheck, lint, unit tests (`mapboxClient`), and production build all pass; actual on-device typeahead behavior against live Mapbox, and the MUI Autocomplete/picklist UX itself, are unverified.
