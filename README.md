@@ -18,3 +18,6 @@ See `.scratch/food-tracker/issues/spec.md` for the full product spec, including 
 ## Development
 
 See `CLAUDE.md` for dev server, build, lint, and test commands.
+
+## Status
+This app is currently in early development.
