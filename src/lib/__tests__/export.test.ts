@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildExportPdf, buildExportRows, entryRowsToCsv, formatEntryHeader, formatEntryMeta, formatEntryReasons } from '../export'
+import { buildExportPdf, buildExportRows, entryRowsToCsv, fitWithinSquare, formatEntryHeader, formatEntryMeta, formatEntryReasons } from '../export'
+
+// A valid 4x2 (non-square) red PNG, so the photo-layout path in buildExportPdf
+// actually decodes real image bytes via jsPDF's getImageProperties.
+const NON_SQUARE_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR4nGP4z8AARwzIHABvqgf5gNwAKAAAAABJRU5ErkJggg=='
 import type { Category, Child, Food, Location, LogEntry, ReasonTag } from '@food-tracker/data-access'
 
 const child: Child = { id: 'child-1', householdId: 'h1', name: 'Alex', birthdate: '2019-04-12', createdAt: '2026-01-01T00:00:00.000Z' }
@@ -137,6 +142,39 @@ describe('formatEntryHeader / formatEntryMeta / formatEntryReasons', () => {
   })
 })
 
+describe('fitWithinSquare', () => {
+  it('leaves a square image square, sized to the box', () => {
+    const { width, height } = fitWithinSquare(100, 100, 28)
+    expect(width).toBeCloseTo(28)
+    expect(height).toBeCloseTo(28)
+  })
+
+  it('scales a landscape image so its longest side fills the box, preserving ratio', () => {
+    const { width, height } = fitWithinSquare(200, 100, 28)
+    expect(width).toBeCloseTo(28)
+    expect(height).toBeCloseTo(14)
+    expect(width / height).toBeCloseTo(200 / 100)
+  })
+
+  it('scales a portrait image the same way', () => {
+    const { width, height } = fitWithinSquare(100, 200, 28)
+    expect(width).toBeCloseTo(14)
+    expect(height).toBeCloseTo(28)
+    expect(width / height).toBeCloseTo(100 / 200)
+  })
+
+  it('never exceeds the box on either side', () => {
+    const { width, height } = fitWithinSquare(1000, 250, 28)
+    expect(width).toBeLessThanOrEqual(28)
+    expect(height).toBeLessThanOrEqual(28)
+  })
+
+  it('falls back to a full square when dimensions are missing/degenerate', () => {
+    expect(fitWithinSquare(0, 0, 28)).toEqual({ width: 28, height: 28 })
+    expect(fitWithinSquare(Number.NaN, 100, 28)).toEqual({ width: 28, height: 28 })
+  })
+})
+
 describe('buildExportPdf', () => {
   it('produces a non-empty single-page PDF for a small entry list', () => {
     const [row] = buildExportRows([baseEntry({ intensity: 3, notes: 'Loved it' })], lookups)
@@ -149,6 +187,15 @@ describe('buildExportPdf', () => {
 
   it('renders a fallback message and stays on one page for an empty entry list', () => {
     const doc = buildExportPdf([], {})
+
+    expect(doc.getNumberOfPages()).toBe(1)
+    expect(doc.output('arraybuffer').byteLength).toBeGreaterThan(0)
+  })
+
+  it('embeds a real (non-square) photo without throwing, using proportional sizing', () => {
+    const [row] = buildExportRows([baseEntry()], lookups)
+
+    const doc = buildExportPdf([row], { [row.entryId]: [NON_SQUARE_PNG] })
 
     expect(doc.getNumberOfPages()).toBe(1)
     expect(doc.output('arraybuffer').byteLength).toBeGreaterThan(0)

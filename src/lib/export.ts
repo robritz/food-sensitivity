@@ -130,6 +130,24 @@ const PDF_LINE_HEIGHT_MM = 6
 const PDF_THUMBNAIL_MM = 28
 const PDF_THUMBNAIL_GAP_MM = 3
 
+/** Scales natural pixel dimensions to fit within a `maxMm` x `maxMm` box while
+ * preserving aspect ratio (ticket 25): the image's longest side becomes
+ * `maxMm`, the other side shorter in proportion. jsPDF's `addImage` scales
+ * width and height independently, so drawing a non-square photo into a square
+ * box distorts it -- sizing the box proportionally here first keeps it
+ * undistorted. Falls back to a full square when dimensions are missing or
+ * degenerate (a photo whose properties couldn't be read), matching the
+ * pre-ticket-25 behavior rather than dropping the thumbnail. */
+export function fitWithinSquare(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxMm: number,
+): { width: number; height: number } {
+  if (!(naturalWidth > 0) || !(naturalHeight > 0)) return { width: maxMm, height: maxMm }
+  const scale = Math.min(maxMm / naturalWidth, maxMm / naturalHeight)
+  return { width: naturalWidth * scale, height: naturalHeight * scale }
+}
+
 /**
  * Builds the PDF export (ticket 16): one section per entry -- Child/Food
  * heading, status/date/place line, reasons, notes, and any attached photo
@@ -200,12 +218,23 @@ export function buildExportPdf(rows: ExportRow[], photoDataUrlsByEntryId: Record
 
     if (photos.length > 0) {
       let photoX = PDF_MARGIN_MM
+      let rowHeight = 0
       for (const dataUrl of photos) {
-        if (photoX + PDF_THUMBNAIL_MM > pageWidth - PDF_MARGIN_MM) break // one row of thumbnails is enough for a print-friendly layout
-        doc.addImage(dataUrl, jsPdfImageFormat(dataUrl), photoX, cursorY, PDF_THUMBNAIL_MM, PDF_THUMBNAIL_MM)
-        photoX += PDF_THUMBNAIL_MM + PDF_THUMBNAIL_GAP_MM
+        // Size each thumbnail to its own aspect ratio within the square cap
+        // (ticket 25) rather than stretching it to a fixed square. jsPDF
+        // decodes the data URL's header synchronously, so its natural pixel
+        // dimensions are available here without an async image load.
+        const { width: naturalWidth, height: naturalHeight } = doc.getImageProperties(dataUrl)
+        const { width, height } = fitWithinSquare(naturalWidth, naturalHeight, PDF_THUMBNAIL_MM)
+        if (photoX + width > pageWidth - PDF_MARGIN_MM) break // one row of thumbnails is enough for a print-friendly layout
+        doc.addImage(dataUrl, jsPdfImageFormat(dataUrl), photoX, cursorY, width, height)
+        photoX += width + PDF_THUMBNAIL_GAP_MM
+        rowHeight = Math.max(rowHeight, height)
       }
-      cursorY += PDF_THUMBNAIL_MM + PDF_LINE_HEIGHT_MM
+      // `rowHeight` <= PDF_THUMBNAIL_MM (the longest side caps at the box), so
+      // the `blockHeight` estimate above (which reserves a full square) stays
+      // a safe upper bound for the page-break check.
+      cursorY += rowHeight + PDF_LINE_HEIGHT_MM
     }
 
     doc.setDrawColor(200)
