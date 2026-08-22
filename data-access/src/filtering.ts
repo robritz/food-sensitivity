@@ -85,48 +85,60 @@ export function filterLogEntries(
   // filters so the overlap is computed over the already-narrowed set (e.g.
   // "foods every selected child has *liked*" when a status filter is active).
   if (!filters.childIds?.length) return perEntry;
-  const kept = new Set(filterByChildOverlap(perEntry.map((c) => c.entry), filters.childIds).map((e) => e.id));
+  const kept = new Set(
+    filterByChildOverlap(perEntry.map((c) => c.entry), filters.childIds, (entry) => entry.foodId).map((e) => e.id),
+  );
   return perEntry.filter((candidate) => kept.has(candidate.entry.id));
 }
 
 /**
- * The set of foodIds that *every* childId in `childIds` has logged at least
- * one of `pairs` for -- the intersection of each selected child's food set
- * (ticket 24's "overlap between people"). A single child yields exactly the
- * foods that child logged; an empty selection, or any selected child who has
- * logged nothing, yields an empty set.
+ * The set of keys that *every* childId in `childIds` has at least one of
+ * `items` for -- the intersection of each selected child's key set (ticket
+ * 24's "overlap between people"). `keyOf` picks the overlap dimension: the
+ * browse list overlaps on food (`entry.foodId`), the map on location
+ * (`entry.locationId`). Items whose `keyOf` is null/undefined (e.g. an entry
+ * with no captured location) contribute nothing. A single child yields
+ * exactly that child's keys; an empty selection, or any selected child with
+ * no keys, yields an empty set.
  */
-export function foodIdsCommonToChildren(
-  pairs: readonly { foodId: string; childId: string }[],
+export function keysCommonToChildren<T extends { childId: string }>(
+  items: readonly T[],
   childIds: readonly string[],
+  keyOf: (item: T) => string | null | undefined,
 ): Set<string> {
   if (childIds.length === 0) return new Set();
-  const foodsByChild = new Map<string, Set<string>>(childIds.map((childId) => [childId, new Set<string>()]));
-  for (const { foodId, childId } of pairs) {
-    foodsByChild.get(childId)?.add(foodId);
+  const keysByChild = new Map<string, Set<string>>(childIds.map((childId) => [childId, new Set<string>()]));
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key == null) continue;
+    keysByChild.get(item.childId)?.add(key);
   }
-  const [first, ...rest] = childIds.map((childId) => foodsByChild.get(childId) ?? new Set<string>());
+  const [first, ...rest] = childIds.map((childId) => keysByChild.get(childId) ?? new Set<string>());
   const overlap = new Set(first);
-  for (const foodId of overlap) {
-    if (!rest.every((set) => set.has(foodId))) overlap.delete(foodId);
+  for (const key of overlap) {
+    if (!rest.every((set) => set.has(key))) overlap.delete(key);
   }
   return overlap;
 }
 
 /**
  * Narrows `items` to those satisfying ticket 24's multi-person overlap: an
- * item is kept only if it belongs to a selected child *and* is for a food
- * every selected child has logged. An empty `childIds` is a no-op (returns a
- * copy of `items` unchanged). Generic over anything carrying `foodId`/`childId`
- * so both the browse list (via `filterLogEntries`, on `LogEntry`) and the map
- * (on `LogEntry` before `buildLocationPins`) share one implementation.
+ * item is kept only if it belongs to a selected child *and* its `keyOf` is
+ * one every selected child shares. An empty `childIds` is a no-op (returns a
+ * copy of `items` unchanged). `keyOf` chooses the overlap dimension so the
+ * one implementation serves both surfaces: the browse list overlaps on food
+ * (via `filterLogEntries`), the map on location (before `buildLocationPins`).
  */
-export function filterByChildOverlap<T extends { foodId: string; childId: string }>(
+export function filterByChildOverlap<T extends { childId: string }>(
   items: readonly T[],
   childIds: readonly string[],
+  keyOf: (item: T) => string | null | undefined,
 ): T[] {
   if (childIds.length === 0) return [...items];
   const selected = items.filter((item) => childIds.includes(item.childId));
-  const overlap = foodIdsCommonToChildren(selected, childIds);
-  return selected.filter((item) => overlap.has(item.foodId));
+  const overlap = keysCommonToChildren(selected, childIds, keyOf);
+  return selected.filter((item) => {
+    const key = keyOf(item);
+    return key != null && overlap.has(key);
+  });
 }

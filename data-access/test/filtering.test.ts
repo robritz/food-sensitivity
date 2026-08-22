@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterByChildOverlap, filterLogEntries, foodIdsCommonToChildren, type LogEntryWithFood } from "../src/filtering.js";
+import { filterByChildOverlap, filterLogEntries, keysCommonToChildren, type LogEntryWithFood } from "../src/filtering.js";
 import type { LogEntry } from "../src/logEntries.js";
 
 function makeEntry(overrides: Partial<LogEntry> & { foodName?: string; categoryId?: string }): LogEntryWithFood {
@@ -203,28 +203,38 @@ describe("filterLogEntries", () => {
   });
 });
 
-describe("foodIdsCommonToChildren", () => {
+describe("keysCommonToChildren", () => {
   const pairs = [
     { foodId: "banana", childId: "alex" },
     { foodId: "apple", childId: "alex" },
     { foodId: "banana", childId: "bailey" },
     { foodId: "pear", childId: "bailey" },
   ];
+  const foodKey = (p: { foodId: string }) => p.foodId;
 
-  it("returns the foods a single child has logged", () => {
-    expect(foodIdsCommonToChildren(pairs, ["alex"])).toEqual(new Set(["banana", "apple"]));
+  it("returns the keys a single child has", () => {
+    expect(keysCommonToChildren(pairs, ["alex"], foodKey)).toEqual(new Set(["banana", "apple"]));
   });
 
-  it("intersects foods across every selected child", () => {
-    expect(foodIdsCommonToChildren(pairs, ["alex", "bailey"])).toEqual(new Set(["banana"]));
+  it("intersects keys across every selected child", () => {
+    expect(keysCommonToChildren(pairs, ["alex", "bailey"], foodKey)).toEqual(new Set(["banana"]));
   });
 
-  it("is empty when a selected child has logged nothing", () => {
-    expect(foodIdsCommonToChildren(pairs, ["alex", "nobody"])).toEqual(new Set());
+  it("is empty when a selected child has nothing", () => {
+    expect(keysCommonToChildren(pairs, ["alex", "nobody"], foodKey)).toEqual(new Set());
   });
 
   it("is empty for an empty child selection", () => {
-    expect(foodIdsCommonToChildren(pairs, [])).toEqual(new Set());
+    expect(keysCommonToChildren(pairs, [], foodKey)).toEqual(new Set());
+  });
+
+  it("ignores items whose key is null/undefined", () => {
+    const withLocations = [
+      { locationId: "home", childId: "alex" },
+      { locationId: null, childId: "alex" },
+      { locationId: "home", childId: "bailey" },
+    ];
+    expect(keysCommonToChildren(withLocations, ["alex", "bailey"], (i) => i.locationId)).toEqual(new Set(["home"]));
   });
 });
 
@@ -236,16 +246,29 @@ describe("filterByChildOverlap", () => {
     { id: "4", foodId: "pear", childId: "bailey" },
     { id: "5", foodId: "banana", childId: "casey" },
   ];
+  const foodKey = (i: { foodId: string }) => i.foodId;
 
   it("returns all items unchanged when no children are selected", () => {
-    expect(filterByChildOverlap(items, [])).toEqual(items);
+    expect(filterByChildOverlap(items, [], foodKey)).toEqual(items);
   });
 
   it("keeps a single child's own items", () => {
-    expect(filterByChildOverlap(items, ["alex"]).map((i) => i.id)).toEqual(["1", "2"]);
+    expect(filterByChildOverlap(items, ["alex"], foodKey).map((i) => i.id)).toEqual(["1", "2"]);
   });
 
-  it("keeps only the selected children's items for foods all of them logged", () => {
-    expect(filterByChildOverlap(items, ["alex", "bailey"]).map((i) => i.id)).toEqual(["1", "3"]);
+  it("keeps only the selected children's items for keys all of them share", () => {
+    expect(filterByChildOverlap(items, ["alex", "bailey"], foodKey).map((i) => i.id)).toEqual(["1", "3"]);
+  });
+
+  it("overlaps on location when given a locationId key selector (the map's dimension)", () => {
+    // Alex & Bailey both logged at home; only Alex at the park. Different
+    // foods -- irrelevant here, the overlap is on location.
+    const entries = [
+      { id: "1", foodId: "banana", locationId: "home", childId: "alex" },
+      { id: "2", foodId: "apple", locationId: "park", childId: "alex" },
+      { id: "3", foodId: "pear", locationId: "home", childId: "bailey" },
+    ];
+    const result = filterByChildOverlap(entries, ["alex", "bailey"], (e) => e.locationId);
+    expect(result.map((e) => e.id)).toEqual(["1", "3"]);
   });
 });

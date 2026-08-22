@@ -9,9 +9,10 @@
 
 **Implementation notes:**
 
-- Core seam in `data-access/src/filtering.ts`: `foodIdsCommonToChildren` (intersection of each selected child's food set) + generic `filterByChildOverlap<T extends {foodId,childId}>` (keep a selected child's items only for foods every selected child logged). Both pure and unit-tested.
-- `childIds` pulled out of per-entry `matchesFilters`; `filterLogEntries` applies `filterByChildOverlap` *after* the per-entry filters, so overlap respects other active filters (e.g. foods every child has *liked*). BrowsePage rows and CSV/PDF export inherit this via `listFoodStatusSummary`/`listFilteredLogEntries` -- no BrowsePage logic change needed.
-- `MapPage.tsx`: new "Family member" filter; `filterByChildOverlap(entries, childFilter)` runs before `buildLocationPins`. Empty selection = every logged location (no regression); filter-empty state has its own message.
+- Core seam in `data-access/src/filtering.ts`: `keysCommonToChildren` (intersection of each selected child's key set) + generic `filterByChildOverlap<T extends {childId}>(items, childIds, keyOf)` (keep a selected child's items only for keys every selected child shares). Both pure and unit-tested. `keyOf` chooses the overlap dimension so each surface picks its own.
+- **The overlap dimension differs by surface:** the browse list overlaps on **food** (`entry.foodId`) -- foods every selected child has logged; the map overlaps on **location** (`entry.locationId`) -- locations every selected child has logged an entry at (the map is about places, not foods).
+- `childIds` pulled out of per-entry `matchesFilters`; `filterLogEntries` applies `filterByChildOverlap` (food key) *after* the per-entry filters, so overlap respects other active filters (e.g. foods every child has *liked*). BrowsePage rows and CSV/PDF export inherit this via `listFoodStatusSummary`/`listFilteredLogEntries` -- no BrowsePage logic change needed.
+- `MapPage.tsx`: new "Family member" filter; `filterByChildOverlap(entries, childFilter, (e) => e.locationId)` runs before `buildLocationPins`. Empty selection = every logged location (no regression); filter-empty state has its own message.
 - Extracted the shared `MultiSelectFilter` out of `BrowsePage` into `src/components/MultiSelectFilter.tsx` so the map reuses it rather than duplicating the Autocomplete.
 - Single-child selection is unchanged (an OR filter of one == that child's entries).
 - Verification: 23 filtering unit tests + a new end-to-end multi-child overlap integration test; full data-access suite (146) and frontend suite (37) pass, plus typecheck/lint/build.

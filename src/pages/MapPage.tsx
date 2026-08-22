@@ -120,11 +120,16 @@ export function MapPage() {
   }, [])
 
   // Filter pins by family member (ticket 24): keep only entries for the
-  // selected children, and -- when several are selected -- only for foods
-  // *every* selected child has logged (overlap/AND), the same `filterByChildOverlap`
-  // the browse list runs through `filterLogEntries`. An empty selection is a
-  // no-op, so the map still shows every logged location by default.
-  const filteredEntries = useMemo(() => filterByChildOverlap(entries, childFilter), [entries, childFilter])
+  // selected children, and -- when several are selected -- only at locations
+  // *every* selected child has logged an entry at (overlap/AND on locationId).
+  // The map is about places, so its overlap dimension is location, not food
+  // like the browse list's; both share `filterByChildOverlap`, differing only
+  // in the `keyOf` selector. An empty selection is a no-op, so the map still
+  // shows every logged location by default.
+  const filteredEntries = useMemo(
+    () => filterByChildOverlap(entries, childFilter, (entry) => entry.locationId),
+    [entries, childFilter],
+  )
   const allPins = useMemo(() => buildLocationPins(locations, filteredEntries), [locations, filteredEntries])
   const pins = useMemo(
     () => (userLocation ? allPins.filter((pin) => isWithinMiles(userLocation, pin.location, NEARBY_RADIUS_MILES)) : allPins),
