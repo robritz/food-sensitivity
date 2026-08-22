@@ -11,7 +11,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 
@@ -24,6 +24,7 @@ export function ChildrenPage() {
   const [birthdate, setBirthdate] = useState('')
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -51,10 +52,14 @@ export function ChildrenPage() {
       setChildren((current) => [...current, child].sort((a, b) => a.name.localeCompare(b.name)))
       setName('')
       setBirthdate('')
+      // Return focus to Name so several children can be added in a row without
+      // re-clicking into the field each time (autoFocus only fires on mount).
+      nameInputRef.current?.focus()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Could not add child.')
     } finally {
       setSubmitting(false)
+
     }
   }
 
@@ -89,7 +94,15 @@ export function ChildrenPage() {
         Add a child
       </Typography>
       <Stack component="form" onSubmit={handleSubmit} spacing={2} noValidate>
-        <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} required fullWidth />
+        <TextField
+          label="Name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          required
+          fullWidth
+          autoFocus
+          inputRef={nameInputRef}
+        />
         <TextField
           label="Birthdate"
           type="date"
