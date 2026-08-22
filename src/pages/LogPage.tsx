@@ -984,9 +984,6 @@ export function LogPage() {
                 }}
                 displayEmpty
               >
-                <MenuItem value="" disabled>
-                  {foods.length === 0 ? 'No foods available offline' : 'Choose an existing food'}
-                </MenuItem>
                 {foods.map((food) => (
                   <MenuItem key={food.id} value={food.id}>
                     {food.name}
@@ -1005,9 +1002,6 @@ export function LogPage() {
               onChange={(event) => setEntryChildId(event.target.value)}
               displayEmpty
             >
-              <MenuItem value="" disabled>
-                Choose a child
-              </MenuItem>
               {children.map((child) => (
                 <MenuItem key={child.id} value={child.id}>
                   {child.name}
