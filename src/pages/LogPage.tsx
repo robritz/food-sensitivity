@@ -50,6 +50,7 @@ import {
   FormControl,
   FormControlLabel,
   FormGroup,
+  FormHelperText,
   FormLabel,
   IconButton,
   InputLabel,
@@ -71,7 +72,6 @@ import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { runOfflineSync } from '../lib/offlineSync'
 import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
-import { filterFoodsOffline } from '../lib/offlineFoodSearch'
 import { sortLogEntryPhotos } from '../lib/entryPhotos'
 
 const FOOD_SEARCH_DEBOUNCE_MS = 250
@@ -535,21 +535,21 @@ export function LogPage() {
   // reuse a match instead of creating a duplicate. Skipped once a food has
   // been selected and the input still reflects its name.
   //
-  // Offline (ticket 11 only allows logging against an existing food), there's
-  // no network round-trip to make -- `searchFoods` would just fail silently
-  // and leave the picker with no options. `foods` was already loaded on
-  // mount, so filter that in memory instead, mirroring `searchFoods`' own
-  // case-insensitive substring match.
+  // Offline, the food picker is a plain dropdown of the already-loaded `foods`
+  // (ticket 25), not this typeahead -- so there's no query to run and no
+  // network round-trip to make (ticket 11 only allows logging against an
+  // existing food offline anyway). Bail out before `searchFoods` so a stale
+  // keystroke can't fire a request while offline.
   useEffect(() => {
+    if (!isOnline) {
+      setFoodOptions([])
+      setFoodSearchLoading(false)
+      return
+    }
     const query = foodPicker.inputValue.trim()
     if (foodPicker.value && foodPicker.value.name === foodPicker.inputValue) return
     if (query === '') {
       setFoodOptions([])
-      return
-    }
-    if (!isOnline) {
-      setFoodOptions(filterFoodsOffline(foods, query))
-      setFoodSearchLoading(false)
       return
     }
     let cancelled = false
@@ -570,7 +570,7 @@ export function LogPage() {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [foodPicker.inputValue, foodPicker.value, foods, isOnline])
+  }, [foodPicker.inputValue, foodPicker.value, isOnline])
 
   function toggleReasonTag(id: string) {
     setEntryReasonTagIds((current) =>
@@ -933,35 +933,65 @@ export function LogPage() {
         <Typography color="text.secondary">Add a child before logging an entry.</Typography>
       ) : (
         <Stack component="form" onSubmit={handleAddEntry} spacing={2} noValidate sx={{ mb: 3 }}>
-          <Autocomplete
-            freeSolo
-            filterOptions={(options) => options}
-            options={foodOptions}
-            loading={foodSearchLoading}
-            {...foodPicker.autocompleteProps}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Food"
-                required
-                helperText="Search for an existing food, or type a new brand/product name."
+          {isOnline ? (
+            <>
+              <Autocomplete
+                freeSolo
+                filterOptions={(options) => options}
+                options={foodOptions}
+                loading={foodSearchLoading}
+                {...foodPicker.autocompleteProps}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Food"
+                    required
+                    helperText="Search for an existing food, or type a new brand/product name."
+                  />
+                )}
               />
-            )}
-          />
-          {!foodPicker.value && foodPicker.inputValue.trim() !== '' && (
-            <Autocomplete
-              freeSolo
-              options={categories}
-              {...categoryPicker.autocompleteProps}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="New food's category"
-                  required
-                  helperText="Pick an existing category, or type a new one to add it for the household."
+              {!foodPicker.value && foodPicker.inputValue.trim() !== '' && (
+                <Autocomplete
+                  freeSolo
+                  options={categories}
+                  {...categoryPicker.autocompleteProps}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="New food's category"
+                      required
+                      helperText="Pick an existing category, or type a new one to add it for the household."
+                    />
+                  )}
                 />
               )}
-            />
+            </>
+          ) : (
+            // Offline (ticket 25): a plain dropdown of already-loaded foods --
+            // an honest affordance for an in-memory list, unlike a typeahead
+            // that implies a live search. Adding a new food needs a
+            // connection, so only existing foods are offered here.
+            <FormControl required fullWidth>
+              <InputLabel id="offline-food-label">Food</InputLabel>
+              <Select
+                labelId="offline-food-label"
+                label="Food"
+                value={foodPicker.value?.id ?? ''}
+                onChange={(event) => {
+                  const food = foods.find((option) => option.id === event.target.value) ?? null
+                  foodPicker.setValue(food)
+                  foodPicker.setInputValue(food?.name ?? '')
+                }}
+                displayEmpty
+              >
+                {foods.map((food) => (
+                  <MenuItem key={food.id} value={food.id}>
+                    {food.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>Offline -- pick an existing food. Adding a new food needs a connection.</FormHelperText>
+            </FormControl>
           )}
           <FormControl required fullWidth>
             <InputLabel id="entry-child-label">Child</InputLabel>
@@ -972,9 +1002,6 @@ export function LogPage() {
               onChange={(event) => setEntryChildId(event.target.value)}
               displayEmpty
             >
-              <MenuItem value="" disabled>
-                Choose a child
-              </MenuItem>
               {children.map((child) => (
                 <MenuItem key={child.id} value={child.id}>
                   {child.name}
@@ -1378,7 +1405,10 @@ export function LogPage() {
                           component="img"
                           src={viewingPhotoUrls[photo.path]}
                           alt={photo.name}
-                          sx={{ width: 96, height: 96, objectFit: 'cover', display: 'block' }}
+                          // Fit within a 96px box preserving aspect ratio
+                          // (ticket 25) rather than cropping to a square, so
+                          // the whole photo shows -- edges and all.
+                          sx={{ maxWidth: 96, maxHeight: 96, display: 'block' }}
                         />
                       </Box>
                     ))}
