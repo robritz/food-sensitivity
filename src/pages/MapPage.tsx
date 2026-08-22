@@ -1,5 +1,6 @@
 import {
   buildLocationPins,
+  filterByChildOverlap,
   listChildren,
   listFoods,
   listLocations,
@@ -28,6 +29,7 @@ import {
 } from '@mui/material'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
+import { MultiSelectFilter } from '../components/MultiSelectFilter'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { isWithinMiles, type LatLng } from '../lib/geoDistance'
 import { PIN_HEX } from '../lib/pinColors'
@@ -66,6 +68,7 @@ export function MapPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedPin, setSelectedPin] = useState<LocationPin | null>(null)
   const [userLocation, setUserLocation] = useState<LatLng | null>(null)
+  const [childFilter, setChildFilter] = useState<string[]>([])
 
   // Captures the caregiver's current position once per page visit so the map
   // (and the list below it) can be scoped to nearby Locations (ticket 19).
@@ -116,7 +119,18 @@ export function MapPage() {
     }
   }, [])
 
-  const allPins = useMemo(() => buildLocationPins(locations, entries), [locations, entries])
+  // Filter pins by family member (ticket 24): keep only entries for the
+  // selected children, and -- when several are selected -- only at locations
+  // *every* selected child has logged an entry at (overlap/AND on locationId).
+  // The map is about places, so its overlap dimension is location, not food
+  // like the browse list's; both share `filterByChildOverlap`, differing only
+  // in the `keyOf` selector. An empty selection is a no-op, so the map still
+  // shows every logged location by default.
+  const filteredEntries = useMemo(
+    () => filterByChildOverlap(entries, childFilter, (entry) => entry.locationId),
+    [entries, childFilter],
+  )
+  const allPins = useMemo(() => buildLocationPins(locations, filteredEntries), [locations, filteredEntries])
   const pins = useMemo(
     () => (userLocation ? allPins.filter((pin) => isWithinMiles(userLocation, pin.location, NEARBY_RADIUS_MILES)) : allPins),
     [allPins, userLocation],
@@ -141,9 +155,28 @@ export function MapPage() {
     )
   }
 
+  const hasChildFilter = childFilter.length > 0
+
   return (
     <AppLayout title="Map">
-      {allPins.length === 0 && <Alert severity="info">No entries logged with a location yet.</Alert>}
+      {children.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <MultiSelectFilter
+            label="Family member"
+            options={children}
+            selectedIds={childFilter}
+            onChange={setChildFilter}
+          />
+        </Box>
+      )}
+
+      {allPins.length === 0 && (
+        <Alert severity="info">
+          {hasChildFilter
+            ? 'No logged locations match the selected family members.'
+            : 'No entries logged with a location yet.'}
+        </Alert>
+      )}
 
       {allPins.length > 0 && pins.length === 0 && (
         <Alert severity="info">No logged locations within {NEARBY_RADIUS_MILES} miles of you.</Alert>

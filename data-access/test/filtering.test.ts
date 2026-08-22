@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterLogEntries, type LogEntryWithFood } from "../src/filtering.js";
+import { filterByChildOverlap, filterLogEntries, keysCommonToChildren, type LogEntryWithFood } from "../src/filtering.js";
 import type { LogEntry } from "../src/logEntries.js";
 
 function makeEntry(overrides: Partial<LogEntry> & { foodName?: string; categoryId?: string }): LogEntryWithFood {
@@ -85,13 +85,66 @@ describe("filterLogEntries", () => {
     expect(result).toEqual([texture, taste, both]);
   });
 
-  it("filters by child", () => {
+  it("filters by a single child", () => {
     const alex = makeEntry({ id: "entry-alex", childId: "child-alex" });
     const bailey = makeEntry({ id: "entry-bailey", childId: "child-bailey" });
 
     const result = filterLogEntries([alex, bailey], { childIds: ["child-bailey"] });
 
     expect(result).toEqual([bailey]);
+  });
+
+  it("with multiple children, keeps only entries for foods every selected child has logged (AND/overlap)", () => {
+    // Both children logged banana; only Alex logged apple, only Bailey logged pear.
+    const alexBanana = makeEntry({ id: "e-ab", childId: "child-alex", foodId: "food-banana" });
+    const alexApple = makeEntry({ id: "e-aa", childId: "child-alex", foodId: "food-apple" });
+    const baileyBanana = makeEntry({ id: "e-bb", childId: "child-bailey", foodId: "food-banana" });
+    const baileyPear = makeEntry({ id: "e-bp", childId: "child-bailey", foodId: "food-pear" });
+
+    const result = filterLogEntries([alexBanana, alexApple, baileyBanana, baileyPear], {
+      childIds: ["child-alex", "child-bailey"],
+    });
+
+    // Only the banana entries survive -- the one food both children logged.
+    expect(result).toEqual([alexBanana, baileyBanana]);
+  });
+
+  it("with multiple children, excludes a non-selected child's entries even for an overlap food", () => {
+    const alexBanana = makeEntry({ id: "e-ab", childId: "child-alex", foodId: "food-banana" });
+    const baileyBanana = makeEntry({ id: "e-bb", childId: "child-bailey", foodId: "food-banana" });
+    const caseyBanana = makeEntry({ id: "e-cb", childId: "child-casey", foodId: "food-banana" });
+
+    const result = filterLogEntries([alexBanana, baileyBanana, caseyBanana], {
+      childIds: ["child-alex", "child-bailey"],
+    });
+
+    expect(result).toEqual([alexBanana, baileyBanana]);
+  });
+
+  it("computes child overlap after other filter types (foods every child has *liked*)", () => {
+    // Both like banana; Bailey only disliked apple, so apple isn't a liked-overlap food.
+    const alexBananaLiked = makeEntry({ id: "e-abl", childId: "child-alex", foodId: "food-banana", status: "liked" });
+    const alexAppleLiked = makeEntry({ id: "e-aal", childId: "child-alex", foodId: "food-apple", status: "liked" });
+    const baileyBananaLiked = makeEntry({ id: "e-bbl", childId: "child-bailey", foodId: "food-banana", status: "liked" });
+    const baileyAppleDisliked = makeEntry({ id: "e-bad", childId: "child-bailey", foodId: "food-apple", status: "disliked" });
+
+    const result = filterLogEntries([alexBananaLiked, alexAppleLiked, baileyBananaLiked, baileyAppleDisliked], {
+      statuses: ["liked"],
+      childIds: ["child-alex", "child-bailey"],
+    });
+
+    expect(result).toEqual([alexBananaLiked, baileyBananaLiked]);
+  });
+
+  it("returns nothing when a selected child has logged none of the others' foods", () => {
+    const alexBanana = makeEntry({ id: "e-ab", childId: "child-alex", foodId: "food-banana" });
+    const baileyPear = makeEntry({ id: "e-bp", childId: "child-bailey", foodId: "food-pear" });
+
+    const result = filterLogEntries([alexBanana, baileyPear], {
+      childIds: ["child-alex", "child-bailey"],
+    });
+
+    expect(result).toEqual([]);
   });
 
   it("filters by location, excluding entries with no captured location", () => {
@@ -147,5 +200,75 @@ describe("filterLogEntries", () => {
     const result = filterLogEntries([matches, wrongStatus, wrongName], { statuses: ["liked"] }, "oscar");
 
     expect(result).toEqual([matches]);
+  });
+});
+
+describe("keysCommonToChildren", () => {
+  const pairs = [
+    { foodId: "banana", childId: "alex" },
+    { foodId: "apple", childId: "alex" },
+    { foodId: "banana", childId: "bailey" },
+    { foodId: "pear", childId: "bailey" },
+  ];
+  const foodKey = (p: { foodId: string }) => p.foodId;
+
+  it("returns the keys a single child has", () => {
+    expect(keysCommonToChildren(pairs, ["alex"], foodKey)).toEqual(new Set(["banana", "apple"]));
+  });
+
+  it("intersects keys across every selected child", () => {
+    expect(keysCommonToChildren(pairs, ["alex", "bailey"], foodKey)).toEqual(new Set(["banana"]));
+  });
+
+  it("is empty when a selected child has nothing", () => {
+    expect(keysCommonToChildren(pairs, ["alex", "nobody"], foodKey)).toEqual(new Set());
+  });
+
+  it("is empty for an empty child selection", () => {
+    expect(keysCommonToChildren(pairs, [], foodKey)).toEqual(new Set());
+  });
+
+  it("ignores items whose key is null/undefined", () => {
+    const withLocations = [
+      { locationId: "home", childId: "alex" },
+      { locationId: null, childId: "alex" },
+      { locationId: "home", childId: "bailey" },
+    ];
+    expect(keysCommonToChildren(withLocations, ["alex", "bailey"], (i) => i.locationId)).toEqual(new Set(["home"]));
+  });
+});
+
+describe("filterByChildOverlap", () => {
+  const items = [
+    { id: "1", foodId: "banana", childId: "alex" },
+    { id: "2", foodId: "apple", childId: "alex" },
+    { id: "3", foodId: "banana", childId: "bailey" },
+    { id: "4", foodId: "pear", childId: "bailey" },
+    { id: "5", foodId: "banana", childId: "casey" },
+  ];
+  const foodKey = (i: { foodId: string }) => i.foodId;
+
+  it("returns all items unchanged when no children are selected", () => {
+    expect(filterByChildOverlap(items, [], foodKey)).toEqual(items);
+  });
+
+  it("keeps a single child's own items", () => {
+    expect(filterByChildOverlap(items, ["alex"], foodKey).map((i) => i.id)).toEqual(["1", "2"]);
+  });
+
+  it("keeps only the selected children's items for keys all of them share", () => {
+    expect(filterByChildOverlap(items, ["alex", "bailey"], foodKey).map((i) => i.id)).toEqual(["1", "3"]);
+  });
+
+  it("overlaps on location when given a locationId key selector (the map's dimension)", () => {
+    // Alex & Bailey both logged at home; only Alex at the park. Different
+    // foods -- irrelevant here, the overlap is on location.
+    const entries = [
+      { id: "1", foodId: "banana", locationId: "home", childId: "alex" },
+      { id: "2", foodId: "apple", locationId: "park", childId: "alex" },
+      { id: "3", foodId: "pear", locationId: "home", childId: "bailey" },
+    ];
+    const result = filterByChildOverlap(entries, ["alex", "bailey"], (e) => e.locationId);
+    expect(result.map((e) => e.id)).toEqual(["1", "3"]);
   });
 });
