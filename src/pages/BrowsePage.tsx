@@ -19,7 +19,6 @@ import {
 } from '@food-tracker/data-access'
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Chip,
@@ -40,6 +39,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close'
 import { useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
+import { MultiSelectFilter } from '../components/MultiSelectFilter'
 import { dataAccessClient } from '../lib/dataAccessClient'
 import { buildExportRows } from '../lib/export'
 import { exportEntriesAsCsv, exportEntriesAsPdf } from '../lib/exportDownload'
@@ -61,53 +61,13 @@ interface SelectedPair {
   childId: string
 }
 
-interface FilterOption {
-  id: string
-  name: string
-}
-
-/** One multi-select filter field (ticket 13): selecting several values within
- * a field is OR'd together server-side by `filterLogEntries` -- this just
- * collects the chosen ids and reports them up. Shared across all five
- * multi-select filter types (status/category/reason/child/location) rather
- * than five near-identical components. */
-function MultiSelectFilter({
-  label,
-  options,
-  selectedIds,
-  onChange,
-}: {
-  label: string
-  options: FilterOption[]
-  selectedIds: string[]
-  onChange: (ids: string[]) => void
-}) {
-  const value = options.filter((option) => selectedIds.includes(option.id))
-  return (
-    <Autocomplete
-      multiple
-      size="small"
-      options={options}
-      value={value}
-      getOptionLabel={(option) => option.name}
-      isOptionEqualToValue={(option, val) => option.id === val.id}
-      onChange={(_event, newValue) => onChange(newValue.map((option) => option.id))}
-      renderInput={(params) => <TextField {...params} label={label} />}
-      renderValue={(selectedOptions, getItemProps) =>
-        selectedOptions.map((option, index) => (
-          <Chip size="small" label={option.name} {...getItemProps({ index })} key={option.id} />
-        ))
-      }
-    />
-  )
-}
-
 /** One row per Food/Child pair (ticket 12) -- the browse screen. Filterable by
  * status, category, reason, child, location, and date range, plus free-text
  * search on Food name/brand (ticket 13): multiple values within one filter
  * type combine as OR, different filter types (and search) combine as AND --
  * see `filterLogEntries`/`listFoodStatusSummary` in data-access for the
- * matching logic. Reads `listFoodStatusSummary` for the row list and lazily
+ * matching logic. Selecting multiple children is the exception -- it means
+ * overlap/AND (foods every selected child has logged), not union (ticket 24). Reads `listFoodStatusSummary` for the row list and lazily
  * loads a pair's full history via `listLogEntries({ foodId, childId })` only
  * once its row is tapped, rather than fetching every history up front. */
 export function BrowsePage() {

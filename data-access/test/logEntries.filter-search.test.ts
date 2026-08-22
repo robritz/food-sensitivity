@@ -139,6 +139,34 @@ describe("listFoodStatusSummary with filters + search (ticket 13)", () => {
     expect(summary.map((row) => row.foodId)).not.toContain(otherFood.id);
   });
 
+  it("treats multiple selected children as overlap/AND -- only foods every selected child has logged (ticket 24)", async () => {
+    const founder = await signUpFixture("Household Child Overlap");
+    const alex = await addChild(founder.client, { name: "Alex", birthdate: "2019-04-12" });
+    const bailey = await addChild(founder.client, { name: "Bailey", birthdate: "2021-02-02" });
+    const protein = await findCategory(founder.client, "Protein");
+    const texture = await findReasonTag(founder.client, "Texture");
+    const banana = await addFood(founder.client, { categoryId: protein.id, name: "Banana" });
+    const apple = await addFood(founder.client, { categoryId: protein.id, name: "Apple" });
+    const pear = await addFood(founder.client, { categoryId: protein.id, name: "Pear" });
+
+    // Both children logged banana; only Alex logged apple, only Bailey logged pear.
+    await addLogEntry(founder.client, { foodId: banana.id, childId: alex.id, status: "liked", reasonTagIds: [texture.id] });
+    await addLogEntry(founder.client, { foodId: banana.id, childId: bailey.id, status: "liked", reasonTagIds: [texture.id] });
+    await addLogEntry(founder.client, { foodId: apple.id, childId: alex.id, status: "liked", reasonTagIds: [texture.id] });
+    await addLogEntry(founder.client, { foodId: pear.id, childId: bailey.id, status: "liked", reasonTagIds: [texture.id] });
+
+    const summary = await listFoodStatusSummary(founder.client, {
+      filters: { childIds: [alex.id, bailey.id] },
+    });
+
+    // Only banana is common to both -- one row per child for it, and no
+    // apple/pear rows (foods only one of them logged).
+    expect(summary.map((row) => row.foodId).sort()).toEqual([banana.id, banana.id].sort());
+    expect(new Set(summary.map((row) => row.childId))).toEqual(new Set([alex.id, bailey.id]));
+    expect(summary.map((row) => row.foodId)).not.toContain(apple.id);
+    expect(summary.map((row) => row.foodId)).not.toContain(pear.id);
+  });
+
   it("scopes filtered/searched results to household -- another household's matching data isn't visible", async () => {
     const householdA = await signUpFixture("Household A Filter Search");
     const householdB = await signUpFixture("Household B Filter Search");
