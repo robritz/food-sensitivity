@@ -4,11 +4,4 @@
 
 **Status:** needs-triage
 
-- [ ] Consider state handling on `LogPage` component (`src/pages/LogPage.tsx`) -- it's grown to ~12 pieces of `useState` across three responsibilities (add-food form, add-entry form, entries list). Worth revisiting once ticket 09 (intensity, backdating, photos) adds more fields to the entry form -- candidate to split into subcomponents or consolidate onto a reducer.
-- [ ] Investigate slow UI on the food log page (`src/pages/LogPage.tsx`).
-
-## Performance
-
-- [ ] Use dynamic `import()` to code-split the application.
-- [ ] Use `build.rolldownOptions.output.codeSplitting` to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
-- [ ] Adjust chunk size limit for this warning via `build.chunkSizeWarningLimit`.
+_No open items right now — everything noticed so far has been split into its own ticket: 31 (LogPage state refactor), 32 (investigate slow UI on the food log page), 33 (code-split the bundle / clear the chunk-size warning). Add new refactors/cleanups/deferred concerns below as they come up._
