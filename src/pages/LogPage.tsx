@@ -1134,9 +1134,6 @@ export function LogPage() {
               <Button variant="outlined" size="small" startIcon={<AddLocationAltIcon />} onClick={enableLocation}>
                 Add a location
               </Button>
-              <FormHelperText>
-                Optional -- add where this was tried or bought (handy for restaurants and shops). Basic foods can skip it.
-              </FormHelperText>
             </Box>
           ) : (
             <Box>
