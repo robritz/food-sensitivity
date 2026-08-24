@@ -30,6 +30,7 @@ import {
   type QueuedLogEntry,
   type ReasonTag,
 } from '@food-tracker/data-access'
+import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt'
 import CloseIcon from '@mui/icons-material/Close'
 import DeleteIcon from '@mui/icons-material/Delete'
 import EditIcon from '@mui/icons-material/Edit'
@@ -207,8 +208,14 @@ export function LogPage() {
   // (may end up somewhere the caregiver isn't, once they pick or type a
   // different place), not the device's raw position.
   const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null)
-  const [locationStatus, setLocationStatus] = useState<'locating' | 'geocoding' | 'ready' | 'unavailable'>(
-    'locating',
+  // Location is opt-in (ticket 28): a caregiver taps "Add a location" to
+  // reveal the Place picker and (with permission) seed it from GPS. Until
+  // then no place is captured or requested -- most entries are basic foods
+  // where a location is just noise. `'idle'` is the pre-opt-in state; the
+  // others only apply once `locationEnabled` is true.
+  const [locationEnabled, setLocationEnabled] = useState(false)
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'geocoding' | 'ready' | 'unavailable'>(
+    'idle',
   )
   // The device's raw GPS position, captured once per page visit alongside
   // `locationCoords` above but never overwritten afterward -- ticket 21's
@@ -483,18 +490,22 @@ export function LogPage() {
     }
   }, [])
 
-  // Captures the device's current GPS coordinates once per page visit (with
-  // permission) and reverse-geocodes them into a suggested place name via
-  // Mapbox (ticket 10). Both steps degrade gracefully: no geolocation
-  // support, denied permission, a missing VITE_MAPBOX_TOKEN, or a failed
-  // Mapbox call all just leave the place field for manual entry rather than
-  // blocking entry creation -- `reverseGeocode` itself already swallows
-  // Mapbox-side failures and resolves to null.
+  // Captures the device's current GPS coordinates and reverse-geocodes them
+  // into a suggested place name via Mapbox (ticket 10) -- but only once the
+  // caregiver has opted in via "Add a location" (ticket 28), not on every
+  // page load. Both steps degrade gracefully: no geolocation support, denied
+  // permission, a missing VITE_MAPBOX_TOKEN, or a failed Mapbox call all just
+  // leave the place field for manual typing rather than blocking entry
+  // creation -- `reverseGeocode` itself already swallows Mapbox-side failures
+  // and resolves to null. When permission is denied the field still renders
+  // (see the 'unavailable' branch below) so a place can be typed by hand.
   useEffect(() => {
+    if (!locationEnabled) return
     if (!navigator.geolocation) {
       setLocationStatus('unavailable')
       return
     }
+    setLocationStatus('locating')
     let cancelled = false
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -529,7 +540,7 @@ export function LogPage() {
     return () => {
       cancelled = true
     }
-  }, [setLocationValue, setLocationInputValue])
+  }, [locationEnabled, setLocationValue, setLocationInputValue])
 
   // Searches existing household Foods as the caregiver types, so they can
   // reuse a match instead of creating a duplicate. Skipped once a food has
@@ -657,6 +668,30 @@ export function LogPage() {
   function removePhoto(index: number) {
     setEntryPhotos((current) => current.filter((_, i) => i !== index))
     setEntryPhotoError(null)
+  }
+
+  // Opt-in location (ticket 28): revealing the Place picker triggers the
+  // GPS/reverse-geocode effect above (which is gated on `locationEnabled`).
+  // Sets 'locating' up front so the field shows its spinner immediately
+  // rather than flashing the idle helper text for a frame; the effect
+  // corrects it to 'unavailable' if the device has no geolocation.
+  function enableLocation() {
+    setLocationStatus('locating')
+    setLocationEnabled(true)
+  }
+
+  // Collapses the Place picker back to the "Add a location" button and clears
+  // everything it captured, so the entry logs without a place. Also resets the
+  // proximity ref and Search Box session so a later re-open starts fresh.
+  function removeLocation() {
+    setLocationEnabled(false)
+    setLocationStatus('idle')
+    setLocationCoords(null)
+    caregiverPositionRef.current = null
+    locationSearchSessionTokenRef.current = null
+    setLocationValue(null)
+    setLocationInputValue('')
+    setLocationSuggestions([])
   }
 
   // Resolves the Location to attach to this entry, if any: no captured
@@ -1094,49 +1129,59 @@ export function LogPage() {
             }
           />
 
-          {locationStatus === 'locating' && (
-            <Typography variant="body2" color="text.secondary">
-              Getting your location…
-            </Typography>
-          )}
-          {locationStatus === 'unavailable' && (
-            <Typography variant="body2" color="text.secondary">
-              Location unavailable -- this entry will be logged without a place.
-            </Typography>
-          )}
-          {(locationStatus === 'geocoding' || locationStatus === 'ready') && (
-            <Autocomplete
-              freeSolo
-              filterOptions={(options) => options}
-              options={locationSuggestions}
-              loading={locationStatus === 'geocoding' || locationSearchLoading || locationRetrieveLoading}
-              {...locationPicker.autocompleteProps}
-              renderOption={(props, option) => {
-                const { key, ...optionProps } = props
-                return (
-                  <li key={key} {...optionProps}>
-                    <ListItemText primary={option.name} secondary={option.placeName} />
-                  </li>
-                )
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Place"
-                  helperText={
-                    locationStatus === 'geocoding'
-                      ? 'Looking up a name for this place…'
-                      : locationRetrieveLoading
-                        ? 'Getting location details…'
-                        : locationSearchLoading
-                          ? 'Searching nearby places…'
-                          : locationPicker.value
-                            ? 'Suggested from your location -- edit if this is wrong, or clear it to log without a place.'
-                            : 'Pick a suggestion to attach a location, or keep typing to log just this name.'
-                  }
-                />
-              )}
-            />
+          {!locationEnabled ? (
+            <Box>
+              <Button variant="outlined" size="small" startIcon={<AddLocationAltIcon />} onClick={enableLocation}>
+                Add a location
+              </Button>
+            </Box>
+          ) : (
+            <Box>
+              <Autocomplete
+                freeSolo
+                filterOptions={(options) => options}
+                options={locationSuggestions}
+                loading={
+                  locationStatus === 'locating' ||
+                  locationStatus === 'geocoding' ||
+                  locationSearchLoading ||
+                  locationRetrieveLoading
+                }
+                {...locationPicker.autocompleteProps}
+                renderOption={(props, option) => {
+                  const { key, ...optionProps } = props
+                  return (
+                    <li key={key} {...optionProps}>
+                      <ListItemText primary={option.name} secondary={option.placeName} />
+                    </li>
+                  )
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Place"
+                    helperText={
+                      locationStatus === 'locating'
+                        ? 'Getting your location…'
+                        : locationStatus === 'geocoding'
+                          ? 'Looking up a name for this place…'
+                          : locationRetrieveLoading
+                            ? 'Getting location details…'
+                            : locationSearchLoading
+                              ? 'Searching nearby places…'
+                              : locationStatus === 'unavailable'
+                                ? "Couldn't get your location -- type a place, or remove it to log without one."
+                                : locationPicker.value
+                                  ? 'Suggested from your location -- edit if this is wrong, or remove it to log without a place.'
+                                  : 'Pick a suggestion to attach a location, or keep typing to log just this name.'
+                    }
+                  />
+                )}
+              />
+              <Button size="small" onClick={removeLocation} sx={{ mt: 1 }}>
+                Remove location
+              </Button>
+            </Box>
           )}
 
           <Box>

@@ -67,6 +67,19 @@ describe("buildLocationPins", () => {
     expect(pins).toEqual([]);
   });
 
+  it("pins only the located entries when most entries have no location (ticket 28)", () => {
+    // Once location capture is opt-in, most entries are basic foods with no
+    // place -- only the few located ones (e.g. a restaurant) become pins.
+    const location = makeLocation({ id: "loc-1" });
+    const located = makeEntry({ id: "entry-located", locationId: "loc-1" });
+    const basicA = makeEntry({ id: "entry-a", locationId: null });
+    const basicB = makeEntry({ id: "entry-b", locationId: null });
+
+    const pins = buildLocationPins([location], [basicA, located, basicB]);
+
+    expect(pins).toEqual([{ location, entries: [located], color: "green" }]);
+  });
+
   it("colors a pin red if any entry logged there was disliked, even alongside liked entries", () => {
     const location = makeLocation({ id: "loc-1" });
     const liked = makeEntry({ id: "entry-1", locationId: "loc-1", status: "liked" });
