@@ -2,11 +2,11 @@
 
 **What to build:** Location should be an opt-in detail, not something captured for every entry. Most entries are basic foods where a place is noise; location is only really useful for restaurants (where a food was tried out) and for tracking where a basic food was purchased. Stop auto-capturing/prompting for location on every log, let a caregiver add one only when it matters, and keep the map showing pins only for entries that actually have a location.
 
-**Status:** ready-for-agent
+**Status:** done -- implemented on `chore/28-optional-location`
 
-- [ ] On `LogPage` (`src/pages/LogPage.tsx`), don't auto-request GPS / reverse-geocode on page load. Today `locationStatus` starts at `'locating'` and a mount effect fires `navigator.geolocation.getCurrentPosition`, then reverse-geocodes and prefills the Place field -- so every visit prompts for location permission and pushes a place onto every entry. Make location capture opt-in behind an explicit affordance (e.g. an "Add a location" / "Where?" toggle or button) that only then requests GPS and shows the Place picker. An entry logged without touching it saves with no location.
-- [ ] Entries logged without a location save with `locationId = null`. This is already supported end-to-end (`LogEntry.locationId` is nullable, `addLogEntry` writes `location_id: null`, `resolveLocationId`/`buildLocationCapture` already return `undefined` when there's no coords/name) -- so this is mainly making sure the new opt-in flow keeps that path working, not new data-access work. **No migration needed.**
-- [ ] On the map page (`MapPage.tsx` / `buildLocationPins`), only create pins for entries that have a location. `buildLocationPins` already skips entries with `locationId == null`, so verify this still holds after the change and that the map's empty state reads sensibly once most entries have no location (e.g. "No entries logged with a location yet." already exists) -- add/adjust a test if the guard isn't covered.
+- [x] On `LogPage` (`src/pages/LogPage.tsx`), don't auto-request GPS / reverse-geocode on page load. Today `locationStatus` starts at `'locating'` and a mount effect fires `navigator.geolocation.getCurrentPosition`, then reverse-geocodes and prefills the Place field -- so every visit prompts for location permission and pushes a place onto every entry. Make location capture opt-in behind an explicit affordance (e.g. an "Add a location" / "Where?" toggle or button) that only then requests GPS and shows the Place picker. An entry logged without touching it saves with no location.
+- [x] Entries logged without a location save with `locationId = null`. This is already supported end-to-end (`LogEntry.locationId` is nullable, `addLogEntry` writes `location_id: null`, `resolveLocationId`/`buildLocationCapture` already return `undefined` when there's no coords/name) -- so this is mainly making sure the new opt-in flow keeps that path working, not new data-access work. **No migration needed.**
+- [x] On the map page (`MapPage.tsx` / `buildLocationPins`), only create pins for entries that have a location. `buildLocationPins` already skips entries with `locationId == null`, so verify this still holds after the change and that the map's empty state reads sensibly once most entries have no location (e.g. "No entries logged with a location yet." already exists) -- add/adjust a test if the guard isn't covered.
 
 **Notes / grounding:**
 
@@ -18,3 +18,12 @@
 **Open design choice (non-blocking):**
 
 - Exact affordance: a collapsible "Add a location" button that reveals the existing Place autocomplete is the lightest touch and reuses the current picker. Confirm placement/wording with the requester if unsure, but don't block on it.
+
+**Implementation notes:**
+
+- Went with the collapsible affordance: an "Add a location" button (default state) reveals the existing Place `Autocomplete`; a "Remove location" button collapses it and clears captured coords/name/session. New `locationEnabled` state gates the GPS/reverse-geocode effect (no permission prompt until opt-in); `locationStatus` gained an `'idle'` (pre-opt-in) state.
+- Position is requested only on opt-in and then reused for both the GPS seed and ticket 21/22's proximity bias -- not up front.
+- Improved graceful-degrade beyond the prior behavior: when geolocation is unavailable/denied the Place field now still renders (previously it was hidden), so a place can be typed/picked by hand.
+- Location persists across the post-submit `resetEntryForm` (unchanged), so logging several entries at one place doesn't require re-adding it each time.
+- Map: `buildLocationPins` already skipped null-location entries; added a `mapPins.test.ts` case for the now-common mixed scenario (mostly location-less entries -> only located ones pin). No migration; `location_id` was already nullable.
+- Verification: typecheck, lint, build, frontend suite (39), and full data-access suite (149) all pass. `LogPage`'s opt-in UX itself isn't unit-tested (no jsdom/RTL in this repo) -- worth a manual browser check (no permission prompt on load; add/remove flow; denied-permission still lets you type a place).
