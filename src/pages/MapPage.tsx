@@ -10,7 +10,6 @@ import {
   type Location,
   type LocationPin,
   type LogEntry,
-  type LogEntryStatus,
 } from '@food-tracker/data-access'
 import CloseIcon from '@mui/icons-material/Close'
 import {
@@ -31,6 +30,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { MultiSelectFilter } from '../components/MultiSelectFilter'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { nameById, statusLabel } from '../lib/entryFormatting'
 import { isWithinMiles, type LatLng } from '../lib/geoDistance'
 import { PIN_HEX } from '../lib/pinColors'
 
@@ -43,14 +43,6 @@ const MAP_HEIGHT = 400
 /** Ticket 19: map (and the location list under it) only shows Locations
  * within this many miles of the caregiver's current position, once known. */
 const NEARBY_RADIUS_MILES = 20
-
-function statusLabel(status: LogEntryStatus): string {
-  return status[0].toUpperCase() + status.slice(1)
-}
-
-function nameById(list: { id: string; name: string }[], id: string): string {
-  return list.find((item) => item.id === id)?.name ?? 'Unknown'
-}
 
 /** Loads every Location the household has logged food at plus every logged
  * entry, and renders one map pin per Location (ticket 14, made interactive

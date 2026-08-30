@@ -41,20 +41,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { MultiSelectFilter } from '../components/MultiSelectFilter'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { nameById, reasonTagNames, STATUSES, statusLabel } from '../lib/entryFormatting'
 import { buildExportRows } from '../lib/export'
 import { exportEntriesAsCsv, exportEntriesAsPdf } from '../lib/exportDownload'
 
 const SEARCH_DEBOUNCE_MS = 250
-
-const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
-
-function statusLabel(status: LogEntryStatus): string {
-  return status[0].toUpperCase() + status.slice(1)
-}
-
-function nameById(list: { id: string; name: string }[], id: string): string {
-  return list.find((item) => item.id === id)?.name ?? 'Unknown'
-}
 
 interface SelectedPair {
   foodId: string
@@ -192,10 +183,6 @@ export function BrowsePage() {
     }
   }, [selected])
 
-  function reasonTagNames(ids: string[]): string {
-    return ids.map((id) => nameById(reasonTags, id)).join(', ')
-  }
-
   function clearFilters() {
     setStatusFilter([])
     setCategoryFilter([])
@@ -241,12 +228,18 @@ export function BrowsePage() {
   }
 
   // Sorted by Food name, then Child name, so the list reads predictably
-  // rather than in arbitrary most-recently-logged order.
-  const sortedRows = [...summary].sort((a, b) => {
-    const foodCompare = nameById(foods, a.foodId).localeCompare(nameById(foods, b.foodId))
-    if (foodCompare !== 0) return foodCompare
-    return nameById(children, a.childId).localeCompare(nameById(children, b.childId))
-  })
+  // rather than in arbitrary most-recently-logged order. Memoized so the
+  // sort (and its per-comparison name lookups) only reruns when the summary
+  // or the name sources change, not on every keystroke/filter re-render.
+  const sortedRows = useMemo(
+    () =>
+      [...summary].sort((a, b) => {
+        const foodCompare = nameById(foods, a.foodId).localeCompare(nameById(foods, b.foodId))
+        if (foodCompare !== 0) return foodCompare
+        return nameById(children, a.childId).localeCompare(nameById(children, b.childId))
+      }),
+    [summary, foods, children],
+  )
 
   if (baseLoading) {
     return (
@@ -429,7 +422,7 @@ export function BrowsePage() {
                     }
                     secondary={
                       <>
-                        {reasonTagNames(entry.reasonTagIds)}
+                        {reasonTagNames(reasonTags, entry.reasonTagIds)}
                         {entry.notes ? ` — "${entry.notes}"` : ''}
                       </>
                     }
