@@ -39,7 +39,7 @@ import {
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { dataAccessClient } from '../../lib/dataAccessClient'
 import { addQueuedEntry } from '../../lib/offlineQueueStore'
-import { findByNameCaseInsensitive, statusLabel, STATUSES, toDatetimeLocalValue } from './logHelpers'
+import { findByNameCaseInsensitive, statusLabel, STATUSES, toDatetimeLocalValue } from '../../lib/entryFormatting'
 import { LocationField } from './LocationField'
 import { useFreeSoloPicker } from './useFreeSoloPicker'
 import { useLocationCapture } from './useLocationCapture'

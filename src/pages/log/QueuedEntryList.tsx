@@ -1,6 +1,6 @@
 import type { Child, Food, QueuedLogEntry, ReasonTag } from '@food-tracker/data-access'
 import { Chip, List, ListItem, ListItemText, Stack, Typography } from '@mui/material'
-import { nameById, reasonTagNames } from './logHelpers'
+import { nameById, reasonTagNames } from '../../lib/entryFormatting'
 
 /** Entries created offline (ticket 11), queued in IndexedDB and shown
  * separately from "Recent entries" so it's visibly "queued, not yet on the

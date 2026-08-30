@@ -1,6 +1,6 @@
 import type { Category, Food } from '@food-tracker/data-access'
 import { List, ListItem, ListItemText } from '@mui/material'
-import { nameById } from './logHelpers'
+import { nameById } from '../../lib/entryFormatting'
 
 /** "All foods" reference list at the bottom of the page -- the household's
  * accumulated Food catalog, each under its category. */

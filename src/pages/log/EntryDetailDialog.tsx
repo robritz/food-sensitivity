@@ -24,7 +24,7 @@ import {
 import { useEffect, useState } from 'react'
 import { dataAccessClient } from '../../lib/dataAccessClient'
 import { sortLogEntryPhotos } from '../../lib/entryPhotos'
-import { nameById, reasonTagNames, statusLabel } from './logHelpers'
+import { nameById, reasonTagNames, statusLabel } from '../../lib/entryFormatting'
 
 /** Single-entry detail view (ticket 17), including the full-size photo
  * lightbox. Fetches the entry's photos fresh each time it opens -- the signed

@@ -23,7 +23,7 @@ import {
 } from '@mui/material'
 import { useEffect, useState } from 'react'
 import { dataAccessClient } from '../../lib/dataAccessClient'
-import { statusLabel, STATUSES } from './logHelpers'
+import { statusLabel, STATUSES } from '../../lib/entryFormatting'
 
 /** Edit dialog for an existing entry (ticket 15). Owns its own draft state,
  * seeded from `entry` each time it opens, and persists via `updateLogEntry`

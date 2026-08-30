@@ -13,7 +13,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material'
-import { nameById, reasonTagNames, statusLabel } from './logHelpers'
+import { nameById, reasonTagNames, statusLabel } from '../../lib/entryFormatting'
 
 /** "Recent entries" list -- read back from Supabase (ticket 12). Presentational:
  * clicking a row opens the detail view, the edit/delete affordances raise up to

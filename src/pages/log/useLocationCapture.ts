@@ -7,7 +7,7 @@ import {
 } from '@food-tracker/data-access'
 import { useEffect, useRef, useState } from 'react'
 import { dataAccessClient } from '../../lib/dataAccessClient'
-import { resolveLocationName } from './logHelpers'
+import { resolveLocationName } from '../../lib/entryFormatting'
 import { useFreeSoloPicker, type NamedOption } from './useFreeSoloPicker'
 
 const LOCATION_SEARCH_DEBOUNCE_MS = 400

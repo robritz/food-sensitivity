@@ -6,7 +6,7 @@ import {
   resolveLocationName,
   statusLabel,
   toDatetimeLocalValue,
-} from '../logHelpers'
+} from '../entryFormatting'
 
 describe('toDatetimeLocalValue', () => {
   it('formats a date as a zero-padded local datetime-local string', () => {

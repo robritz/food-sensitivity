@@ -10,7 +10,7 @@ import {
 } from '@mui/material'
 import { useEffect, useState } from 'react'
 import { dataAccessClient } from '../../lib/dataAccessClient'
-import { nameById } from './logHelpers'
+import { nameById } from '../../lib/entryFormatting'
 
 /** Delete-confirmation dialog (ticket 15). Owns its in-flight/error state and
  * performs the delete itself, reporting the removed id back via `onDeleted`. */
