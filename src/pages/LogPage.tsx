@@ -1,156 +1,37 @@
 import {
-  addCategory,
-  addFood,
-  addLogEntry,
-  addLogEntryPhoto,
-  addReasonTag,
-  deleteLogEntry,
-  findOrCreateLocation,
-  getLogEntryPhotoUrl,
   listCategories,
   listChildren,
   listFoods,
   listLogEntries,
   listLogEntryIdsWithPhotos,
-  listLogEntryPhotos,
   listReasonTags,
-  MAX_PHOTOS_PER_LOG_ENTRY,
-  retrievePlace,
-  reverseGeocode,
-  searchFoods,
-  searchPlaces,
-  updateLogEntry,
   type Category,
   type Child,
   type Food,
   type LogEntry,
-  type LogEntryPhoto,
-  type LogEntryStatus,
-  type QueuedLocationCapture,
   type QueuedLogEntry,
   type ReasonTag,
 } from '@food-tracker/data-access'
-import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt'
-import CloseIcon from '@mui/icons-material/Close'
-import DeleteIcon from '@mui/icons-material/Delete'
-import EditIcon from '@mui/icons-material/Edit'
-import PhotoCameraIcon from '@mui/icons-material/PhotoCamera'
-import {
-  Alert,
-  Autocomplete,
-  Box,
-  Button,
-  Checkbox,
-  Chip,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  FormControl,
-  FormControlLabel,
-  FormGroup,
-  FormHelperText,
-  FormLabel,
-  IconButton,
-  InputLabel,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
-  MenuItem,
-  Radio,
-  RadioGroup,
-  Rating,
-  Select,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material'
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { Alert, Box, CircularProgress, Divider, Typography } from '@mui/material'
+import { useEffect, useState } from 'react'
 import { AppLayout } from '../components/AppLayout'
 import { dataAccessClient } from '../lib/dataAccessClient'
+import { listQueuedEntries } from '../lib/offlineQueueStore'
 import { runOfflineSync } from '../lib/offlineSync'
-import { addQueuedEntry, listQueuedEntries } from '../lib/offlineQueueStore'
-import { sortLogEntryPhotos } from '../lib/entryPhotos'
+import { AddEntryForm } from './log/AddEntryForm'
+import { DeleteEntryDialog } from './log/DeleteEntryDialog'
+import { EditEntryDialog } from './log/EditEntryDialog'
+import { EntryDetailDialog } from './log/EntryDetailDialog'
+import { EntryList } from './log/EntryList'
+import { FoodList } from './log/FoodList'
+import { QueuedEntryList } from './log/QueuedEntryList'
 
-const FOOD_SEARCH_DEBOUNCE_MS = 250
-const LOCATION_SEARCH_DEBOUNCE_MS = 400
-const LOCATION_SUGGESTION_LIMIT = 5
-const LOCATION_SEARCH_RADIUS_MILES = 5
-
-const STATUSES: LogEntryStatus[] = ['liked', 'disliked', 'inconsistent']
-
-/** "Date happened" as a `datetime-local`-input-compatible string, in the
- * caregiver's local time zone (unlike `toISOString`, which is always UTC and
- * would show the wrong wall-clock time in the field). */
-function toDatetimeLocalValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-function statusLabel(status: LogEntryStatus): string {
-  return status[0].toUpperCase() + status.slice(1)
-}
-
-interface NamedOption {
-  id: string
-  name: string
-}
-
-/** A Mapbox Search Box suggestion (ticket 22), shaped as a `NamedOption` --
- * `id` is the Mapbox place id -- so it can drive a `useFreeSoloPicker`
- * Autocomplete the same way `Food`/`Category` do. `latitude`/`longitude` are
- * undefined for a freshly-picked suggestion (Search Box's `/suggest` doesn't
- * return coordinates) until `retrievePlace` resolves them -- the initial
- * GPS-based suggestion (reverse-geocoded on page load) already has them. */
-interface LocationSuggestion extends NamedOption {
-  latitude?: number
-  longitude?: number
-  /** Full address, for disambiguating same-named suggestions (e.g. two
-   * nearby chain locations) in the picklist. */
-  placeName?: string
-}
-
-/** Manages the value/inputValue pair for a freeSolo MUI Autocomplete backed
- * by named options (Food, Category): typing updates the free-typed text and
- * clears the selection; picking an option syncs both. Ignores MUI's own
- * 'reset' notification (fired e.g. on blur) -- it would otherwise wipe out
- * free-typed text that hasn't matched an option; selecting an option updates
- * the displayed text via onChange instead. */
-function useFreeSoloPicker<T extends NamedOption>() {
-  const [value, setValue] = useState<T | null>(null)
-  const [inputValue, setInputValue] = useState('')
-
-  return {
-    value,
-    inputValue,
-    setValue,
-    setInputValue,
-    autocompleteProps: {
-      value,
-      inputValue,
-      getOptionLabel: (option: T | string) => (typeof option === 'string' ? option : option.name),
-      isOptionEqualToValue: (option: T | string, val: T | string) =>
-        typeof option !== 'string' && typeof val !== 'string' && option.id === val.id,
-      onInputChange: (_event: unknown, newInputValue: string, reason: string) => {
-        if (reason === 'reset') return
-        setInputValue(newInputValue)
-        if (reason === 'input') setValue(null)
-      },
-      onChange: (_event: unknown, newValue: T | string | null) => {
-        if (newValue && typeof newValue !== 'string') {
-          setValue(newValue)
-          setInputValue(newValue.name)
-        } else {
-          setValue(null)
-        }
-      },
-    },
-  }
-}
-
+/** Coordinates the food-log page: loads the household's shared data (children,
+ * foods, categories, reason tags, entries) and the offline queue, keeps them
+ * in sync with connectivity, and hands slices to the add-entry form, the
+ * lists, and the detail/edit/delete dialogs. Each of those owns its own
+ * interaction state; this component only holds the shared data and which
+ * entry (if any) each dialog is currently open for. */
 export function LogPage() {
   const [children, setChildren] = useState<Child[]>([])
   const [foods, setFoods] = useState<Food[]>([])
@@ -166,210 +47,24 @@ export function LogPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Tracked via events (not read ad hoc via `navigator.onLine`) so effects
-  // that behave differently online vs. offline -- like the food search below
-  // -- can list it as a dependency and re-run the moment connectivity
-  // changes, instead of only reacting to it lazily on the next keystroke.
+  // Tracked via events (not read ad hoc via `navigator.onLine`) so children
+  // that behave differently online vs. offline -- like the food search and
+  // location picker -- can list it as a dependency and re-run the moment
+  // connectivity changes, instead of only reacting to it lazily on the next
+  // keystroke.
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
 
-  // Entries created while offline (ticket 11): queued in IndexedDB via
-  // `addQueuedEntry`, shown separately below so it's visibly "queued, not
-  // yet on the server" rather than mixed into `entries` (which only ever
-  // holds what's actually been read back from Supabase).
+  // Entries created while offline (ticket 11): queued in IndexedDB, shown
+  // separately below so it's visibly "queued, not yet on the server" rather
+  // than mixed into `entries` (which only ever holds what's actually been
+  // read back from Supabase).
   const [queuedEntries, setQueuedEntries] = useState<QueuedLogEntry[]>([])
 
-  const categoryPicker = useFreeSoloPicker<Category>()
-  const { setValue: setDefaultCategory, setInputValue: setDefaultCategoryInputValue } = categoryPicker
-  const foodPicker = useFreeSoloPicker<Food>()
-  const [foodOptions, setFoodOptions] = useState<Food[]>([])
-  const [foodSearchLoading, setFoodSearchLoading] = useState(false)
-
-  const [entryChildId, setEntryChildId] = useState('')
-  const [entryStatus, setEntryStatus] = useState<LogEntryStatus>('liked')
-  const [entryReasonTagIds, setEntryReasonTagIds] = useState<string[]>([])
-  const [entryNotes, setEntryNotes] = useState('')
-  const [entryIntensity, setEntryIntensity] = useState<number | null>(null)
-  const [entryOccurredAt, setEntryOccurredAt] = useState(() => toDatetimeLocalValue(new Date()))
-  const [entryPhotos, setEntryPhotos] = useState<File[]>([])
-  const [entryPhotoError, setEntryPhotoError] = useState<string | null>(null)
-  const [entryError, setEntryError] = useState<string | null>(null)
-  const [addingEntry, setAddingEntry] = useState(false)
-
-  const [newReasonTagInput, setNewReasonTagInput] = useState('')
-  const [addingReasonTag, setAddingReasonTag] = useState(false)
-  const [reasonTagError, setReasonTagError] = useState<string | null>(null)
-
-  // GPS coordinates captured once per page visit (ticket 10) -- not
-  // re-requested per entry, since a caregiver logging several entries in one
-  // sitting is almost always still in the same place. `locationCoords` stays
-  // null if permission is denied or the device has no geolocation, in which
-  // case entries are simply logged without a place. Distinct from
-  // `caregiverPositionRef` below: this is *the entry's* Location coordinates
-  // (may end up somewhere the caregiver isn't, once they pick or type a
-  // different place), not the device's raw position.
-  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null)
-  // Location is opt-in (ticket 28): a caregiver taps "Add a location" to
-  // reveal the Place picker and (with permission) seed it from GPS. Until
-  // then no place is captured or requested -- most entries are basic foods
-  // where a location is just noise. `'idle'` is the pre-opt-in state; the
-  // others only apply once `locationEnabled` is true.
-  const [locationEnabled, setLocationEnabled] = useState(false)
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'geocoding' | 'ready' | 'unavailable'>(
-    'idle',
-  )
-  // The device's raw GPS position, captured once per page visit alongside
-  // `locationCoords` above but never overwritten afterward -- ticket 21's
-  // Mapbox proximity bias needs "where the caregiver actually is" even after
-  // `locationCoords` has moved on to a picked/typed place elsewhere. A ref,
-  // not state: only read inside the search effect below, never rendered.
-  const caregiverPositionRef = useRef<{ latitude: number; longitude: number } | null>(null)
-
-  // Place field (tickets 10/20/22): a freeSolo Autocomplete over Mapbox
-  // Search Box suggestions, same `useFreeSoloPicker` pattern as
-  // `foodPicker`/`categoryPicker`. `locationPicker.value` is only set when a
-  // suggestion was actually picked (including the initial GPS-based
-  // suggestion, set directly below) -- that's what makes it eligible for
-  // ticket 10's reuse-by-place-id dedup; free-typed text that never matched
-  // a picked suggestion keeps `value` null, so `findOrCreateLocation` always
-  // treats it as a new custom Location (ticket 20's rule, preserved) --
-  // though per ticket 22, unpicked text no longer resolves coordinates at
-  // all (Search Box's `/suggest` doesn't return them), so a custom Location
-  // like that saves with a name but no coordinates.
-  const locationPicker = useFreeSoloPicker<LocationSuggestion>()
-  const { setValue: setLocationValue, setInputValue: setLocationInputValue } = locationPicker
-  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([])
-  const [locationSearchLoading, setLocationSearchLoading] = useState(false)
-  const [locationRetrieveLoading, setLocationRetrieveLoading] = useState(false)
-
-  // One Mapbox Search Box session per suggest -> retrieve pair (its billing
-  // unit): created lazily the first time a fresh typing burst searches
-  // below, reused across keystrokes within that burst, and cleared back to
-  // null once a pick is retrieved (or the field is emptied) so the next
-  // burst gets a fresh one. A ref, not state -- only read/written inside the
-  // two effects below, never rendered.
-  const locationSearchSessionTokenRef = useRef<string | null>(null)
-
-  // Resolves `locationCoords` for whatever suggestion is currently selected.
-  // The initial GPS-based suggestion (set directly below, from
-  // `reverseGeocode`) already has coordinates -- use them as-is. A
-  // freshly-picked Search Box suggestion doesn't (`/suggest` never returns
-  // them), so retrieve them via `retrievePlace` and patch the picked value
-  // with the result -- that second `setLocationValue` re-triggers this
-  // effect, but now with coordinates present, so it terminates after one
-  // more (no-op) pass. Free-typed text (no selected value) never resolves
-  // coordinates (ticket 22) -- only the search effect below handles that.
-  useEffect(() => {
-    const value = locationPicker.value
-    if (!value) return
-    if (value.latitude !== undefined && value.longitude !== undefined) {
-      setLocationCoords({ latitude: value.latitude, longitude: value.longitude })
-      return
-    }
-    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
-    const sessionToken = locationSearchSessionTokenRef.current
-    if (!token || !sessionToken) return
-    let cancelled = false
-    setLocationRetrieveLoading(true)
-    retrievePlace(value.id, token, sessionToken)
-      .then((details) => {
-        if (cancelled || locationPicker.value?.id !== value.id) return
-        locationSearchSessionTokenRef.current = null
-        if (details) {
-          setLocationCoords({ latitude: details.latitude, longitude: details.longitude })
-          setLocationValue({
-            ...value,
-            latitude: details.latitude,
-            longitude: details.longitude,
-            placeName: details.placeName ?? value.placeName,
-          })
-        } else {
-          setLocationCoords(null)
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLocationRetrieveLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [locationPicker.value, setLocationValue])
-
-  // Searches Mapbox's Search Box API for places matching the typed text,
-  // biased toward and hard-restricted near the caregiver's current position
-  // (ticket 22 -- the classic Geocoding API ticket 21 originally used has no
-  // business/POI data on this account). Debounced via the same `useEffect` +
-  // `setTimeout` + cleanup idiom the food-search effect above uses, rather
-  // than firing a Mapbox request per keystroke.
-  useEffect(() => {
-    const query = locationPicker.inputValue.trim()
-    if (locationPicker.value && locationPicker.value.name === locationPicker.inputValue) return
-    setLocationSuggestions([])
-    setLocationCoords(null)
-    if (query === '') {
-      locationSearchSessionTokenRef.current = null
-      return
-    }
-    if (!isOnline) return
-    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
-    if (!token) return
-    if (!locationSearchSessionTokenRef.current) {
-      locationSearchSessionTokenRef.current = crypto.randomUUID()
-    }
-    const sessionToken = locationSearchSessionTokenRef.current
-    let cancelled = false
-    setLocationSearchLoading(true)
-    const timeoutId = setTimeout(() => {
-      searchPlaces(query, token, sessionToken, {
-        proximity: caregiverPositionRef.current ?? undefined,
-        radiusMiles: LOCATION_SEARCH_RADIUS_MILES,
-        types: 'poi,address',
-        limit: LOCATION_SUGGESTION_LIMIT,
-      })
-        .then((suggestions) => {
-          if (cancelled) return
-          setLocationSuggestions(
-            suggestions.map((suggestion) => ({
-              id: suggestion.mapboxId,
-              name: suggestion.name,
-              placeName: suggestion.placeName,
-            })),
-          )
-        })
-        .finally(() => {
-          if (!cancelled) setLocationSearchLoading(false)
-        })
-    }, LOCATION_SEARCH_DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timeoutId)
-    }
-  }, [locationPicker.inputValue, locationPicker.value, isOnline])
-
+  // Which entry each dialog is open for (null = closed). The dialogs
+  // themselves own the rest of their interaction state.
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null)
-  const [editStatus, setEditStatus] = useState<LogEntryStatus>('liked')
-  const [editReasonTagIds, setEditReasonTagIds] = useState<string[]>([])
-  const [editNotes, setEditNotes] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [editError, setEditError] = useState<string | null>(null)
-
   const [deletingEntry, setDeletingEntry] = useState<LogEntry | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  // Single-entry detail view (ticket 17). `viewingPhotoUrls` holds freshly
-  // signed URLs fetched each time the dialog opens -- they expire after 60s
-  // (private bucket), so they're never persisted onto `entries`/list state,
-  // only kept here for as long as the dialog is open.
   const [viewingEntry, setViewingEntry] = useState<LogEntry | null>(null)
-  const [viewingPhotos, setViewingPhotos] = useState<LogEntryPhoto[]>([])
-  const [viewingPhotoUrls, setViewingPhotoUrls] = useState<Record<string, string>>({})
-  const [viewingPhotosLoading, setViewingPhotosLoading] = useState(false)
-  const [viewingPhotosError, setViewingPhotosError] = useState<string | null>(null)
-  const [lightboxPath, setLightboxPath] = useState<string | null>(null)
-  // Bumped on every openDetailDialog call; an in-flight fetch only applies
-  // its result if its id is still current, so a superseded open (clicking a
-  // different entry before the first one's photos load) is discarded.
-  const viewingRequestIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -387,10 +82,6 @@ export function LogPage() {
         setCategories(categoriesResult)
         setReasonTags(reasonTagsResult)
         setEntries(entriesResult)
-        if (categoriesResult.length > 0) {
-          setDefaultCategory(categoriesResult[0])
-          setDefaultCategoryInputValue(categoriesResult[0].name)
-        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load the food log.')
@@ -401,7 +92,7 @@ export function LogPage() {
     return () => {
       cancelled = true
     }
-  }, [setDefaultCategory, setDefaultCategoryInputValue])
+  }, [])
 
   // Keeps the "has photos" set in sync with `entries` -- re-lists on every
   // add/edit/delete rather than trying to patch the set incrementally.
@@ -490,458 +181,6 @@ export function LogPage() {
     }
   }, [])
 
-  // Captures the device's current GPS coordinates and reverse-geocodes them
-  // into a suggested place name via Mapbox (ticket 10) -- but only once the
-  // caregiver has opted in via "Add a location" (ticket 28), not on every
-  // page load. Both steps degrade gracefully: no geolocation support, denied
-  // permission, a missing VITE_MAPBOX_TOKEN, or a failed Mapbox call all just
-  // leave the place field for manual typing rather than blocking entry
-  // creation -- `reverseGeocode` itself already swallows Mapbox-side failures
-  // and resolves to null. When permission is denied the field still renders
-  // (see the 'unavailable' branch below) so a place can be typed by hand.
-  useEffect(() => {
-    if (!locationEnabled) return
-    if (!navigator.geolocation) {
-      setLocationStatus('unavailable')
-      return
-    }
-    setLocationStatus('locating')
-    let cancelled = false
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        if (cancelled) return
-        const { latitude, longitude } = position.coords
-        setLocationCoords({ latitude, longitude })
-        caregiverPositionRef.current = { latitude, longitude }
-
-        const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
-        if (!token) {
-          setLocationStatus('ready')
-          return
-        }
-        setLocationStatus('geocoding')
-        reverseGeocode(latitude, longitude, token)
-          .then((match) => {
-            if (cancelled) return
-            if (match) {
-              setLocationValue({ id: match.mapboxPlaceId, name: match.name, latitude, longitude })
-              setLocationInputValue(match.name)
-            }
-            setLocationStatus('ready')
-          })
-          .catch(() => {
-            if (!cancelled) setLocationStatus('ready')
-          })
-      },
-      () => {
-        if (!cancelled) setLocationStatus('unavailable')
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [locationEnabled, setLocationValue, setLocationInputValue])
-
-  // Searches existing household Foods as the caregiver types, so they can
-  // reuse a match instead of creating a duplicate. Skipped once a food has
-  // been selected and the input still reflects its name.
-  //
-  // Offline, the food picker is a plain dropdown of the already-loaded `foods`
-  // (ticket 25), not this typeahead -- so there's no query to run and no
-  // network round-trip to make (ticket 11 only allows logging against an
-  // existing food offline anyway). Bail out before `searchFoods` so a stale
-  // keystroke can't fire a request while offline.
-  useEffect(() => {
-    if (!isOnline) {
-      setFoodOptions([])
-      setFoodSearchLoading(false)
-      return
-    }
-    const query = foodPicker.inputValue.trim()
-    if (foodPicker.value && foodPicker.value.name === foodPicker.inputValue) return
-    if (query === '') {
-      setFoodOptions([])
-      return
-    }
-    let cancelled = false
-    setFoodSearchLoading(true)
-    const timeoutId = setTimeout(() => {
-      searchFoods(dataAccessClient, query)
-        .then((results) => {
-          if (!cancelled) setFoodOptions(results)
-        })
-        .catch(() => {
-          if (!cancelled) setFoodOptions([])
-        })
-        .finally(() => {
-          if (!cancelled) setFoodSearchLoading(false)
-        })
-    }, FOOD_SEARCH_DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timeoutId)
-    }
-  }, [foodPicker.inputValue, foodPicker.value, isOnline])
-
-  function toggleReasonTag(id: string) {
-    setEntryReasonTagIds((current) =>
-      current.includes(id) ? current.filter((tagId) => tagId !== id) : [...current, id],
-    )
-  }
-
-  // Finds a same-name match (case-insensitive) among already-loaded named
-  // options -- used before creating a custom category/reason tag so a typo
-  // in casing (e.g. "fruit" vs "Fruit") reuses the existing one instead of
-  // spawning a confusing near-duplicate.
-  function findByNameCaseInsensitive<T extends NamedOption>(options: T[], name: string): T | undefined {
-    return options.find((option) => option.name.toLowerCase() === name.toLowerCase())
-  }
-
-  // Reuses the selected category if the caregiver picked one, or a same-name
-  // existing one if they typed a match by hand; otherwise adds it as a new
-  // custom category for the household (ticket 08) before using it.
-  async function resolveCategoryId(): Promise<string> {
-    if (categoryPicker.value) return categoryPicker.value.id
-    const name = categoryPicker.inputValue.trim()
-    if (name === '') throw new Error('Choose or enter a category.')
-    const existing = findByNameCaseInsensitive(categories, name)
-    if (existing) return existing.id
-    const newCategory = await addCategory(dataAccessClient, name)
-    setCategories((current) => [...current, newCategory].sort((a, b) => a.name.localeCompare(b.name)))
-    return newCategory.id
-  }
-
-  // Reuses the selected Food if the caregiver picked a search result;
-  // otherwise the typed name hasn't matched anything, so creates a new Food
-  // under the chosen category before logging against it.
-  async function resolveFoodId(): Promise<string> {
-    if (foodPicker.value) return foodPicker.value.id
-    const name = foodPicker.inputValue.trim()
-    if (name === '') throw new Error('Choose or enter a food.')
-    const categoryId = await resolveCategoryId()
-    const newFood = await addFood(dataAccessClient, { categoryId, name })
-    setFoods((current) => [...current, newFood].sort((a, b) => a.name.localeCompare(b.name)))
-    return newFood.id
-  }
-
-  // Adds a new reason tag for the household (ticket 08) and immediately
-  // checks it, since a caregiver adding a tag mid-entry almost always means
-  // to apply it to the entry they're logging. Reuses a same-name existing
-  // tag instead of creating a near-duplicate, same as `resolveCategoryId`.
-  async function handleAddReasonTag() {
-    const name = newReasonTagInput.trim()
-    if (name === '') return
-    setReasonTagError(null)
-    setAddingReasonTag(true)
-    try {
-      const existing = findByNameCaseInsensitive(reasonTags, name)
-      const tag = existing ?? (await addReasonTag(dataAccessClient, name))
-      if (!existing) setReasonTags((current) => [...current, tag].sort((a, b) => a.name.localeCompare(b.name)))
-      setEntryReasonTagIds((current) => (current.includes(tag.id) ? current : [...current, tag.id]))
-      setNewReasonTagInput('')
-    } catch (err) {
-      setReasonTagError(err instanceof Error ? err.message : 'Could not add reason tag.')
-    } finally {
-      setAddingReasonTag(false)
-    }
-  }
-
-  // Adds up to MAX_PHOTOS_PER_LOG_ENTRY photos total (across however many
-  // times the caregiver picks a file), trimming and warning rather than
-  // rejecting outright if a single selection would exceed the cap.
-  function handlePhotoInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const files = event.target.files
-    // Snapshot into a plain array before resetting -- `files` is a live
-    // FileList tied to the input, so clearing `value` below empties it too.
-    const incoming = files ? Array.from(files) : []
-    event.target.value = '' // lets picking the same file again re-trigger onChange
-    if (incoming.length === 0) return
-    setEntryPhotos((current) => {
-      const room = MAX_PHOTOS_PER_LOG_ENTRY - current.length
-      setEntryPhotoError(
-        incoming.length > room ? `An entry can have at most ${MAX_PHOTOS_PER_LOG_ENTRY} photos.` : null,
-      )
-      return [...current, ...incoming.slice(0, room)]
-    })
-  }
-
-  function removePhoto(index: number) {
-    setEntryPhotos((current) => current.filter((_, i) => i !== index))
-    setEntryPhotoError(null)
-  }
-
-  // Opt-in location (ticket 28): revealing the Place picker triggers the
-  // GPS/reverse-geocode effect above (which is gated on `locationEnabled`).
-  // Sets 'locating' up front so the field shows its spinner immediately
-  // rather than flashing the idle helper text for a frame; the effect
-  // corrects it to 'unavailable' if the device has no geolocation.
-  function enableLocation() {
-    setLocationStatus('locating')
-    setLocationEnabled(true)
-  }
-
-  // Collapses the Place picker back to the "Add a location" button and clears
-  // everything it captured, so the entry logs without a place. Also resets the
-  // proximity ref and Search Box session so a later re-open starts fresh.
-  function removeLocation() {
-    setLocationEnabled(false)
-    setLocationStatus('idle')
-    setLocationCoords(null)
-    caregiverPositionRef.current = null
-    locationSearchSessionTokenRef.current = null
-    setLocationValue(null)
-    setLocationInputValue('')
-    setLocationSuggestions([])
-  }
-
-  // Resolves the Location to attach to this entry, if any: no captured
-  // coordinates or no place name (suggested or manually typed) means logging
-  // Shared by `resolveLocationId` and `buildLocationCapture` below: no
-  // captured coordinates, or no place name (suggested or manually typed),
-  // both mean "log without a place" -- returns undefined either way so both
-  // callers can bail out the same way.
-  function resolvedLocationName(): string | undefined {
-    if (!locationCoords) return undefined
-    const name = locationPicker.inputValue.trim()
-    return name === '' ? undefined : name
-  }
-
-  // `findOrCreateLocation` handles reuse -- passing the same mapboxPlaceId
-  // again reuses the existing household Location instead of duplicating it.
-  // `locationPicker.value` is only set when a suggestion was actually
-  // picked (ticket 10/21), never from ticket 20's silent forward-geocode
-  // fallback -- so free-typed text that merely happens to resolve to
-  // coordinates still creates a new custom Location, not a dedup reuse.
-  async function resolveLocationId(): Promise<string | undefined> {
-    const name = resolvedLocationName()
-    if (name === undefined || !locationCoords) return undefined
-    const location = await findOrCreateLocation(dataAccessClient, {
-      name,
-      latitude: locationCoords.latitude,
-      longitude: locationCoords.longitude,
-      mapboxPlaceId: locationPicker.value?.id ?? null,
-    })
-    return location.id
-  }
-
-  // The offline counterpart of `resolveLocationId`: same "no coords or no
-  // name means logging without a place" rule (via `resolvedLocationName`),
-  // but never calls `findOrCreateLocation` (a Supabase round-trip) -- that's
-  // deferred to sync time, once `syncQueuedEntries` actually has a
-  // connection to use. Generates its own `id` (rather than leaving it for
-  // `findOrCreateLocation` to assign one at sync time) so a retried sync
-  // attempt resolves to the same Location row instead of creating a second
-  // one -- see `FindOrCreateLocationInput.id`.
-  function buildLocationCapture(): QueuedLocationCapture | undefined {
-    const name = resolvedLocationName()
-    if (name === undefined || !locationCoords) return undefined
-    return {
-      id: crypto.randomUUID(),
-      name,
-      latitude: locationCoords.latitude,
-      longitude: locationCoords.longitude,
-      mapboxPlaceId: locationPicker.value?.id ?? null,
-    }
-  }
-
-  function resetEntryForm() {
-    foodPicker.setValue(null)
-    foodPicker.setInputValue('')
-    setFoodOptions([])
-    setEntryReasonTagIds([])
-    setEntryNotes('')
-    setEntryIntensity(null)
-    setEntryOccurredAt(toDatetimeLocalValue(new Date()))
-    setEntryPhotos([])
-    setEntryPhotoError(null)
-  }
-
-  // Queues an entry locally instead of writing it to Supabase -- the offline
-  // path (ticket 11). Only logs against an *existing* Food: creating a new
-  // Food/Category (`resolveFoodId`/`resolveCategoryId`) needs its own
-  // network round-trip that can't happen offline, so `handleAddEntry` below
-  // only calls this once it's confirmed `foodPicker.value` is set. Photos
-  // are captured as-is (their bytes, not yet uploaded) and location as raw
-  // coordinates/name (not yet resolved to a Location row) -- both finish the
-  // rest of the trip through `syncQueuedEntries` once back online.
-  async function queueEntryOffline(foodId: string) {
-    const queuedEntry: QueuedLogEntry = {
-      clientId: crypto.randomUUID(),
-      input: {
-        foodId,
-        childId: entryChildId,
-        status: entryStatus,
-        reasonTagIds: entryReasonTagIds,
-        notes: entryNotes.trim() === '' ? undefined : entryNotes,
-        intensity: entryIntensity ?? undefined,
-        occurredAt: new Date(entryOccurredAt).toISOString(),
-      },
-      location: buildLocationCapture(),
-      photos: entryPhotos.map((file) => ({ id: crypto.randomUUID(), name: file.name, blob: file })),
-    }
-    await addQueuedEntry(queuedEntry)
-    setQueuedEntries((current) => [queuedEntry, ...current])
-  }
-
-  async function handleAddEntry(event: FormEvent) {
-    event.preventDefault()
-    setEntryError(null)
-    setAddingEntry(true)
-    try {
-      if (!navigator.onLine) {
-        if (!foodPicker.value) {
-          throw new Error('Choose an existing food to log while offline -- adding a new one needs a connection.')
-        }
-        await queueEntryOffline(foodPicker.value.id)
-        resetEntryForm()
-        return
-      }
-
-      const foodId = await resolveFoodId()
-      const locationId = await resolveLocationId()
-      const entry = await addLogEntry(dataAccessClient, {
-        foodId,
-        childId: entryChildId,
-        status: entryStatus,
-        reasonTagIds: entryReasonTagIds,
-        notes: entryNotes.trim() === '' ? undefined : entryNotes,
-        intensity: entryIntensity ?? undefined,
-        occurredAt: new Date(entryOccurredAt).toISOString(),
-        locationId,
-      })
-      setEntries((current) => [entry, ...current])
-
-      // Uploaded as a follow-up step once the entry exists (photos attach
-      // to a log_entry_id) -- the entry itself is kept even if a photo
-      // upload fails, rather than rolling the whole submission back.
-      if (entryPhotos.length > 0) {
-        const uploads = await Promise.allSettled(
-          entryPhotos.map((file) => addLogEntryPhoto(dataAccessClient, entry.id, file)),
-        )
-        const failedCount = uploads.filter((result) => result.status === 'rejected').length
-        if (failedCount > 0) {
-          setEntryError(`Entry logged, but ${failedCount} photo(s) failed to upload.`)
-        }
-      }
-
-      resetEntryForm()
-    } catch (err) {
-      setEntryError(err instanceof Error ? err.message : 'Could not add log entry.')
-    } finally {
-      setAddingEntry(false)
-    }
-  }
-
-  function openEditDialog(entry: LogEntry) {
-    setEditingEntry(entry)
-    setEditStatus(entry.status)
-    setEditReasonTagIds(entry.reasonTagIds)
-    setEditNotes(entry.notes ?? '')
-    setEditError(null)
-  }
-
-  function closeEditDialog() {
-    if (editSaving) return
-    setEditingEntry(null)
-  }
-
-  function toggleEditReasonTag(id: string) {
-    setEditReasonTagIds((current) =>
-      current.includes(id) ? current.filter((tagId) => tagId !== id) : [...current, id],
-    )
-  }
-
-  async function handleSaveEdit() {
-    if (!editingEntry) return
-    setEditError(null)
-    setEditSaving(true)
-    try {
-      const updated = await updateLogEntry(dataAccessClient, editingEntry.id, {
-        status: editStatus,
-        reasonTagIds: editReasonTagIds,
-        notes: editNotes.trim() === '' ? null : editNotes,
-      })
-      setEntries((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)))
-      setEditingEntry(null)
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Could not save changes.')
-    } finally {
-      setEditSaving(false)
-    }
-  }
-
-  function openDeleteDialog(entry: LogEntry) {
-    setDeletingEntry(entry)
-    setDeleteError(null)
-  }
-
-  function closeDeleteDialog() {
-    if (deleting) return
-    setDeletingEntry(null)
-  }
-
-  async function handleConfirmDelete() {
-    if (!deletingEntry) return
-    setDeleteError(null)
-    setDeleting(true)
-    try {
-      await deleteLogEntry(dataAccessClient, deletingEntry.id)
-      setEntries((current) => current.filter((entry) => entry.id !== deletingEntry.id))
-      setDeletingEntry(null)
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Could not delete entry.')
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  // Opens the single-entry detail view and fetches its photos fresh (rather
-  // than in the load-time useEffect) so the signed URLs are as new as
-  // possible when they're actually rendered -- see the note on
-  // `viewingPhotoUrls` above. Guards against a rapid A-then-B click on two
-  // different entries the same way the load-time/geolocation/food-search
-  // effects guard with a `cancelled` flag: without it, entry A's slower
-  // fetch could resolve after B's dialog is already open and clobber B's
-  // photos with A's.
-  function openDetailDialog(entry: LogEntry) {
-    const requestId = ++viewingRequestIdRef.current
-    setViewingEntry(entry)
-    setViewingPhotos([])
-    setViewingPhotoUrls({})
-    setViewingPhotosError(null)
-    setLightboxPath(null)
-    setViewingPhotosLoading(true)
-    listLogEntryPhotos(dataAccessClient, entry.id)
-      .then(async (photos) => {
-        const sorted = sortLogEntryPhotos(photos)
-        const urls = await Promise.all(sorted.map((photo) => getLogEntryPhotoUrl(dataAccessClient, photo.path)))
-        if (viewingRequestIdRef.current !== requestId) return
-        setViewingPhotos(sorted)
-        setViewingPhotoUrls(Object.fromEntries(sorted.map((photo, index) => [photo.path, urls[index]])))
-      })
-      .catch((err) => {
-        if (viewingRequestIdRef.current !== requestId) return
-        setViewingPhotosError(err instanceof Error ? err.message : 'Could not load photos.')
-      })
-      .finally(() => {
-        if (viewingRequestIdRef.current !== requestId) return
-        setViewingPhotosLoading(false)
-      })
-  }
-
-  function closeDetailDialog() {
-    setViewingEntry(null)
-    setLightboxPath(null)
-  }
-
-  function nameById(list: { id: string; name: string }[], id: string): string {
-    return list.find((item) => item.id === id)?.name ?? 'Unknown'
-  }
-
-  function reasonTagNames(ids: string[]): string {
-    return ids.map((id) => nameById(reasonTags, id)).join(', ')
-  }
-
   if (loading) {
     return (
       <AppLayout title="Food log">
@@ -964,295 +203,32 @@ export function LogPage() {
       <Typography variant="h6" component="h2" gutterBottom>
         Log an entry
       </Typography>
-      {children.length === 0 ? (
-        <Typography color="text.secondary">Add a child before logging an entry.</Typography>
-      ) : (
-        <Stack component="form" onSubmit={handleAddEntry} spacing={2} noValidate sx={{ mb: 3 }}>
-          {isOnline ? (
-            <>
-              <Autocomplete
-                freeSolo
-                filterOptions={(options) => options}
-                options={foodOptions}
-                loading={foodSearchLoading}
-                {...foodPicker.autocompleteProps}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Food"
-                    required
-                    helperText="Search for an existing food, or type a new brand/product name."
-                  />
-                )}
-              />
-              {!foodPicker.value && foodPicker.inputValue.trim() !== '' && (
-                <Autocomplete
-                  freeSolo
-                  options={categories}
-                  {...categoryPicker.autocompleteProps}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="New food's category"
-                      required
-                      helperText="Pick an existing category, or type a new one to add it for the household."
-                    />
-                  )}
-                />
-              )}
-            </>
-          ) : (
-            // Offline (ticket 25): a plain dropdown of already-loaded foods --
-            // an honest affordance for an in-memory list, unlike a typeahead
-            // that implies a live search. Adding a new food needs a
-            // connection, so only existing foods are offered here.
-            <FormControl required fullWidth>
-              <InputLabel id="offline-food-label">Food</InputLabel>
-              <Select
-                labelId="offline-food-label"
-                label="Food"
-                value={foodPicker.value?.id ?? ''}
-                onChange={(event) => {
-                  const food = foods.find((option) => option.id === event.target.value) ?? null
-                  foodPicker.setValue(food)
-                  foodPicker.setInputValue(food?.name ?? '')
-                }}
-                displayEmpty
-              >
-                {foods.map((food) => (
-                  <MenuItem key={food.id} value={food.id}>
-                    {food.name}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>Offline -- pick an existing food. Adding a new food needs a connection.</FormHelperText>
-            </FormControl>
-          )}
-          <FormControl required fullWidth>
-            <InputLabel id="entry-child-label">Child</InputLabel>
-            <Select
-              labelId="entry-child-label"
-              label="Child"
-              value={entryChildId}
-              onChange={(event) => setEntryChildId(event.target.value)}
-              displayEmpty
-            >
-              {children.map((child) => (
-                <MenuItem key={child.id} value={child.id}>
-                  {child.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <TextField
-            label="Date happened"
-            type="datetime-local"
-            value={entryOccurredAt}
-            onChange={(event) => setEntryOccurredAt(event.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-            helperText="Defaults to now -- change it to log something that happened earlier."
-            fullWidth
-          />
-
-          <FormControl component="fieldset">
-            <FormLabel component="legend">Status</FormLabel>
-            <RadioGroup
-              row
-              value={entryStatus}
-              onChange={(event) => setEntryStatus(event.target.value as LogEntryStatus)}
-            >
-              {STATUSES.map((status) => (
-                <FormControlLabel key={status} value={status} control={<Radio />} label={statusLabel(status)} />
-              ))}
-            </RadioGroup>
-          </FormControl>
-
-          <FormControl component="fieldset">
-            <FormLabel component="legend">Intensity (optional)</FormLabel>
-            <Rating
-              value={entryIntensity}
-              onChange={(_event, newValue) => setEntryIntensity(newValue)}
-              max={5}
-            />
-          </FormControl>
-
-          <FormControl component="fieldset">
-            <FormLabel component="legend">Reasons</FormLabel>
-            <FormGroup row>
-              {reasonTags.map((tag) => (
-                <FormControlLabel
-                  key={tag.id}
-                  control={
-                    <Checkbox checked={entryReasonTagIds.includes(tag.id)} onChange={() => toggleReasonTag(tag.id)} />
-                  }
-                  label={tag.name}
-                />
-              ))}
-            </FormGroup>
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1 }}>
-              <TextField
-                size="small"
-                label="Add a reason tag"
-                value={newReasonTagInput}
-                onChange={(event) => setNewReasonTagInput(event.target.value)}
-                helperText="Adds a new reason tag for the whole household."
-              />
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={newReasonTagInput.trim() === '' || addingReasonTag}
-                onClick={handleAddReasonTag}
-              >
-                {addingReasonTag ? 'Adding…' : 'Add'}
-              </Button>
-            </Stack>
-            {reasonTagError && (
-              <Alert severity="error" sx={{ mt: 1 }}>
-                {reasonTagError}
-              </Alert>
-            )}
-          </FormControl>
-
-          <TextField
-            label="Notes"
-            value={entryNotes}
-            onChange={(event) => setEntryNotes(event.target.value)}
-            multiline
-            minRows={2}
-            fullWidth
-            // Inconsistent reactions are the case most worth a note (what
-            // was inconsistent about it?), but it's still optional -- the
-            // field itself is unchanged, just nudged via helper text.
-            helperText={
-              entryStatus === 'inconsistent' ? "What made this inconsistent? (optional)" : undefined
-            }
-          />
-
-          {!locationEnabled ? (
-            <Box>
-              <Button variant="outlined" size="small" startIcon={<AddLocationAltIcon />} onClick={enableLocation}>
-                Add a location
-              </Button>
-            </Box>
-          ) : (
-            <Box>
-              <Autocomplete
-                freeSolo
-                filterOptions={(options) => options}
-                options={locationSuggestions}
-                loading={
-                  locationStatus === 'locating' ||
-                  locationStatus === 'geocoding' ||
-                  locationSearchLoading ||
-                  locationRetrieveLoading
-                }
-                {...locationPicker.autocompleteProps}
-                renderOption={(props, option) => {
-                  const { key, ...optionProps } = props
-                  return (
-                    <li key={key} {...optionProps}>
-                      <ListItemText primary={option.name} secondary={option.placeName} />
-                    </li>
-                  )
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Place"
-                    helperText={
-                      locationStatus === 'locating'
-                        ? 'Getting your location…'
-                        : locationStatus === 'geocoding'
-                          ? 'Looking up a name for this place…'
-                          : locationRetrieveLoading
-                            ? 'Getting location details…'
-                            : locationSearchLoading
-                              ? 'Searching nearby places…'
-                              : locationStatus === 'unavailable'
-                                ? "Couldn't get your location -- type a place, or remove it to log without one."
-                                : locationPicker.value
-                                  ? 'Suggested from your location -- edit if this is wrong, or remove it to log without a place.'
-                                  : 'Pick a suggestion to attach a location, or keep typing to log just this name.'
-                    }
-                  />
-                )}
-              />
-              <Button size="small" onClick={removeLocation} sx={{ mt: 1 }}>
-                Remove location
-              </Button>
-            </Box>
-          )}
-
-          <Box>
-            <FormLabel component="legend">Photos (up to {MAX_PHOTOS_PER_LOG_ENTRY})</FormLabel>
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center', mt: 1 }}>
-              {entryPhotos.map((file, index) => (
-                <Chip key={`${file.name}-${index}`} label={file.name} onDelete={() => removePhoto(index)} />
-              ))}
-              {entryPhotos.length < MAX_PHOTOS_PER_LOG_ENTRY && (
-                <Button component="label" size="small" variant="outlined">
-                  Add photo
-                  <input type="file" accept="image/*" hidden multiple onChange={handlePhotoInputChange} />
-                </Button>
-              )}
-            </Stack>
-            {entryPhotoError && (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                {entryPhotoError}
-              </Alert>
-            )}
-          </Box>
-
-          {entryError && <Alert severity="error">{entryError}</Alert>}
-          <Button
-            type="submit"
-            variant="contained"
-            disabled={
-              addingEntry ||
-              entryChildId === '' ||
-              entryReasonTagIds.length === 0 ||
-              foodPicker.inputValue.trim() === '' ||
-              (!foodPicker.value && !categoryPicker.value && categoryPicker.inputValue.trim() === '')
-            }
-          >
-            {addingEntry ? 'Logging…' : 'Log entry'}
-          </Button>
-        </Stack>
-      )}
+      <AddEntryForm
+        childProfiles={children}
+        foods={foods}
+        categories={categories}
+        reasonTags={reasonTags}
+        isOnline={isOnline}
+        onEntryAdded={(entry) => setEntries((current) => [entry, ...current])}
+        onEntryQueued={(queuedEntry) => setQueuedEntries((current) => [queuedEntry, ...current])}
+        onFoodAdded={(food) =>
+          setFoods((current) => [...current, food].sort((a, b) => a.name.localeCompare(b.name)))
+        }
+        onCategoryAdded={(category) =>
+          setCategories((current) => [...current, category].sort((a, b) => a.name.localeCompare(b.name)))
+        }
+        onReasonTagAdded={(tag) =>
+          setReasonTags((current) => [...current, tag].sort((a, b) => a.name.localeCompare(b.name)))
+        }
+      />
 
       {queuedEntries.length > 0 && (
-        <>
-          <Typography variant="h6" component="h2" gutterBottom>
-            Queued (offline)
-          </Typography>
-          <List sx={{ bgcolor: 'background.paper', borderRadius: 1, mb: 3 }}>
-            {queuedEntries.map((queuedEntry) => (
-              <ListItem key={queuedEntry.clientId} alignItems="flex-start">
-                <ListItemText
-                  primary={
-                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                      <Typography component="span" sx={{ fontWeight: 500 }}>
-                        {nameById(children, queuedEntry.input.childId)} —{' '}
-                        {nameById(foods, queuedEntry.input.foodId)}
-                      </Typography>
-                      <Chip size="small" color="warning" label="Queued — will sync when back online" />
-                    </Stack>
-                  }
-                  secondary={
-                    <>
-                      {new Date(queuedEntry.input.occurredAt ?? new Date().toISOString()).toLocaleString()} —{' '}
-                      {reasonTagNames(queuedEntry.input.reasonTagIds)}
-                      {queuedEntry.photos.length > 0
-                        ? ` — ${queuedEntry.photos.length} photo(s) pending upload`
-                        : ''}
-                    </>
-                  }
-                />
-              </ListItem>
-            ))}
-          </List>
-        </>
+        <QueuedEntryList
+          queuedEntries={queuedEntries}
+          childProfiles={children}
+          foods={foods}
+          reasonTags={reasonTags}
+        />
       )}
 
       <Divider sx={{ mb: 3 }} />
@@ -1260,243 +236,52 @@ export function LogPage() {
       <Typography variant="h6" component="h2" gutterBottom>
         Recent entries
       </Typography>
-      <List sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
-        {entries.length === 0 && (
-          <ListItem>
-            <ListItemText primary="No entries yet." />
-          </ListItem>
-        )}
-        {entries.map((entry) => (
-          <ListItem
-            key={entry.id}
-            alignItems="flex-start"
-            disablePadding
-            secondaryAction={
-              <Stack direction="row" spacing={0.5}>
-                <IconButton edge="end" aria-label="Edit entry" onClick={() => openEditDialog(entry)}>
-                  <EditIcon fontSize="small" />
-                </IconButton>
-                <IconButton edge="end" aria-label="Delete entry" onClick={() => openDeleteDialog(entry)}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Stack>
-            }
-          >
-            <ListItemButton
-              alignItems="flex-start"
-              onClick={() => openDetailDialog(entry)}
-              sx={{ pr: 10 }}
-            >
-              <ListItemText
-                primary={
-                  <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                    <Typography component="span" sx={{ fontWeight: 500 }}>
-                      {nameById(children, entry.childId)} — {nameById(foods, entry.foodId)}
-                    </Typography>
-                    <Chip size="small" label={statusLabel(entry.status)} />
-                    {entry.intensity !== null && <Rating size="small" value={entry.intensity} max={5} readOnly />}
-                    {entryIdsWithPhotos.has(entry.id) && (
-                      <PhotoCameraIcon fontSize="small" color="action" titleAccess="Has photos" />
-                    )}
-                  </Stack>
-                }
-                secondary={
-                  <>
-                    {new Date(entry.occurredAt).toLocaleString()} — {reasonTagNames(entry.reasonTagIds)}
-                    {entry.notes ? ` — "${entry.notes}"` : ''}
-                  </>
-                }
-              />
-            </ListItemButton>
-          </ListItem>
-        ))}
-      </List>
+      <EntryList
+        entries={entries}
+        childProfiles={children}
+        foods={foods}
+        reasonTags={reasonTags}
+        entryIdsWithPhotos={entryIdsWithPhotos}
+        onView={setViewingEntry}
+        onEdit={setEditingEntry}
+        onDelete={setDeletingEntry}
+      />
 
-      <Dialog open={editingEntry !== null} onClose={closeEditDialog} fullWidth maxWidth="sm">
-        <DialogTitle>Edit entry</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <FormControl component="fieldset">
-              <FormLabel component="legend">Status</FormLabel>
-              <RadioGroup row value={editStatus} onChange={(event) => setEditStatus(event.target.value as LogEntryStatus)}>
-                {STATUSES.map((status) => (
-                  <FormControlLabel key={status} value={status} control={<Radio />} label={statusLabel(status)} />
-                ))}
-              </RadioGroup>
-            </FormControl>
+      <EditEntryDialog
+        entry={editingEntry}
+        reasonTags={reasonTags}
+        onClose={() => setEditingEntry(null)}
+        onSaved={(updated) => {
+          setEntries((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)))
+          setEditingEntry(null)
+        }}
+      />
 
-            <FormControl component="fieldset">
-              <FormLabel component="legend">Reasons</FormLabel>
-              <FormGroup row>
-                {reasonTags.map((tag) => (
-                  <FormControlLabel
-                    key={tag.id}
-                    control={
-                      <Checkbox checked={editReasonTagIds.includes(tag.id)} onChange={() => toggleEditReasonTag(tag.id)} />
-                    }
-                    label={tag.name}
-                  />
-                ))}
-              </FormGroup>
-            </FormControl>
+      <DeleteEntryDialog
+        entry={deletingEntry}
+        childProfiles={children}
+        foods={foods}
+        onClose={() => setDeletingEntry(null)}
+        onDeleted={(id) => {
+          setEntries((current) => current.filter((entry) => entry.id !== id))
+          setDeletingEntry(null)
+        }}
+      />
 
-            <TextField
-              label="Notes"
-              value={editNotes}
-              onChange={(event) => setEditNotes(event.target.value)}
-              multiline
-              minRows={2}
-              fullWidth
-            />
-
-            {editError && <Alert severity="error">{editError}</Alert>}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeEditDialog} disabled={editSaving}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleSaveEdit}
-            disabled={editSaving || editReasonTagIds.length === 0}
-          >
-            {editSaving ? 'Saving…' : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={deletingEntry !== null} onClose={closeDeleteDialog}>
-        <DialogTitle>Delete entry?</DialogTitle>
-        <DialogContent>
-          <Typography>
-            This removes the entry for{' '}
-            {deletingEntry ? `${nameById(children, deletingEntry.childId)} — ${nameById(foods, deletingEntry.foodId)}` : ''}{' '}
-            permanently. This can't be undone.
-          </Typography>
-          {deleteError && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {deleteError}
-            </Alert>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeDeleteDialog} disabled={deleting}>
-            Cancel
-          </Button>
-          <Button color="error" variant="contained" onClick={handleConfirmDelete} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={viewingEntry !== null} onClose={closeDetailDialog} fullWidth maxWidth="sm">
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {viewingEntry ? `${nameById(children, viewingEntry.childId)} — ${nameById(foods, viewingEntry.foodId)}` : ''}
-          <IconButton aria-label="Close" onClick={closeDetailDialog} size="small">
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {viewingEntry && (
-            <Stack spacing={2}>
-              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                <Chip size="small" label={statusLabel(viewingEntry.status)} />
-                {viewingEntry.intensity !== null && (
-                  <Rating size="small" value={viewingEntry.intensity} max={5} readOnly />
-                )}
-              </Stack>
-              <Typography variant="body2" color="text.secondary">
-                {new Date(viewingEntry.occurredAt).toLocaleString()}
-              </Typography>
-              <Typography variant="body2">Reasons: {reasonTagNames(viewingEntry.reasonTagIds)}</Typography>
-              {viewingEntry.notes && <Typography variant="body2">"{viewingEntry.notes}"</Typography>}
-
-              <Box>
-                <Typography variant="subtitle2" gutterBottom>
-                  Photos
-                </Typography>
-                {viewingPhotosLoading && (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                    <CircularProgress size={24} />
-                  </Box>
-                )}
-                {viewingPhotosError && <Alert severity="error">{viewingPhotosError}</Alert>}
-                {!viewingPhotosLoading && !viewingPhotosError && viewingPhotos.length === 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    No photos attached to this entry.
-                  </Typography>
-                )}
-                {!viewingPhotosLoading && !viewingPhotosError && viewingPhotos.length > 0 && (
-                  <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-                    {viewingPhotos.map((photo) => (
-                      <Box
-                        key={photo.path}
-                        component="button"
-                        type="button"
-                        onClick={() => setLightboxPath(photo.path)}
-                        aria-label={`View ${photo.name} full size`}
-                        sx={{
-                          p: 0,
-                          border: 'none',
-                          borderRadius: 1,
-                          overflow: 'hidden',
-                          cursor: 'pointer',
-                          bgcolor: 'transparent',
-                          lineHeight: 0,
-                        }}
-                      >
-                        <Box
-                          component="img"
-                          src={viewingPhotoUrls[photo.path]}
-                          alt={photo.name}
-                          // Fit within a 96px box preserving aspect ratio
-                          // (ticket 25) rather than cropping to a square, so
-                          // the whole photo shows -- edges and all.
-                          sx={{ maxWidth: 96, maxHeight: 96, display: 'block' }}
-                        />
-                      </Box>
-                    ))}
-                  </Stack>
-                )}
-              </Box>
-            </Stack>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={lightboxPath !== null} onClose={() => setLightboxPath(null)} maxWidth="lg">
-        <DialogContent
-          sx={{ p: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', bgcolor: 'common.black' }}
-        >
-          {lightboxPath && (
-            <Box
-              component="img"
-              src={viewingPhotoUrls[lightboxPath]}
-              alt=""
-              sx={{ maxWidth: '100%', maxHeight: '80vh', display: 'block' }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <EntryDetailDialog
+        entry={viewingEntry}
+        childProfiles={children}
+        foods={foods}
+        reasonTags={reasonTags}
+        onClose={() => setViewingEntry(null)}
+      />
 
       <Divider sx={{ my: 3 }} />
 
       <Typography variant="h6" component="h2" gutterBottom>
         All foods
       </Typography>
-      <List dense sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
-        {foods.length === 0 && (
-          <ListItem>
-            <ListItemText primary="No foods yet." />
-          </ListItem>
-        )}
-        {foods.map((food) => (
-          <ListItem key={food.id}>
-            <ListItemText primary={food.name} secondary={nameById(categories, food.categoryId)} />
-          </ListItem>
-        ))}
-      </List>
+      <FoodList foods={foods} categories={categories} />
     </AppLayout>
   )
 }
